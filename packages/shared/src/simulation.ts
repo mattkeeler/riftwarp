@@ -1,8 +1,16 @@
 import type { Entity, EntityId } from './types.js';
 import { EntityType, ShipType } from './types.js';
 import type { InputState, SnapshotEntity } from './protocol.js';
-import { ARENA_WIDTH, ARENA_HEIGHT, DECEL, REBOUND_COEFF } from './constants.js';
-import { applyRotation, stepEntityPhysics } from './physics.js';
+import {
+  ARENA_WIDTH,
+  ARENA_HEIGHT,
+  DECEL,
+  REBOUND_COEFF,
+  DEFAULT_ORBIT_DISTANCE,
+  PORTAL_ARC_SPEED,
+} from './constants.js';
+import { applyRotation, stepEntityPhysics, degToRad } from './physics.js';
+import { SHIP_DEFINITIONS } from './shipData.js';
 
 // ---- World State ----
 
@@ -30,8 +38,7 @@ export function createShipEntity(
   spawnX: number,
   spawnY: number,
 ): Entity {
-  // Basic ship stats — will be expanded with full shipData in Phase 3
-  const stats = getBasicShipStats(shipType);
+  const def = SHIP_DEFINITIONS[shipType];
   const id = world.nextEntityId++;
   const entity: Entity = {
     id,
@@ -39,47 +46,56 @@ export function createShipEntity(
     ownerId,
     position: { x: spawnX, y: spawnY },
     velocity: { vx: 0, vy: 0 },
-    rotation: { angle: 0, rotateSpeed: stats.rotateSpeed },
+    rotation: { angle: 0, rotateSpeed: def.rotateSpeed },
     physics: {
-      maxThrust: stats.maxThrust,
-      thrustPower: stats.accel,
+      maxThrust: def.maxThrust,
+      thrustPower: def.accel,
       friction: DECEL,
       bounded: true,
       rebound: REBOUND_COEFF,
     },
-    health: { current: stats.hp, max: stats.hp },
+    health: { current: def.hitpoints, max: def.hitpoints },
+    shipStats: {
+      shipType,
+      gunLevel: def.gunUpgradeLevel,
+      thrustLevel: def.thrustUpgradeLevel,
+      hasRetros: false,
+      specialType: def.specialType,
+      trackingCannons: def.trackingCannons,
+    },
   };
   world.entities.set(id, entity);
   return entity;
 }
 
-interface BasicShipStats {
-  rotateSpeed: number;
-  maxThrust: number;
-  accel: number;
-  hp: number;
-}
-
-function getBasicShipStats(shipType: ShipType): BasicShipStats {
-  // Simplified stats from g_fighterData — full version in Phase 3
-  switch (shipType) {
-    case ShipType.Tank:
-      return { rotateSpeed: 5.0, maxThrust: 6.0, accel: 0.10, hp: 280 };
-    case ShipType.Wing:
-      return { rotateSpeed: 7.0, maxThrust: 7.0, accel: 0.18, hp: 240 };
-    case ShipType.Squid:
-      return { rotateSpeed: 10.0, maxThrust: 10.0, accel: 0.48, hp: 200 };
-    case ShipType.Rabbit:
-      return { rotateSpeed: 8.0, maxThrust: 8.5, accel: 0.30, hp: 180 };
-    case ShipType.Turtle:
-      return { rotateSpeed: 6.0, maxThrust: 6.5, accel: 0.15, hp: 250 };
-    case ShipType.Flash:
-      return { rotateSpeed: 9.0, maxThrust: 9.0, accel: 0.35, hp: 190 };
-    case ShipType.Hunter:
-      return { rotateSpeed: 7.5, maxThrust: 7.5, accel: 0.22, hp: 220 };
-    case ShipType.Flagship:
-      return { rotateSpeed: 5.5, maxThrust: 5.5, accel: 0.12, hp: 300 };
-  }
+/** Create a wormhole portal entity for a player */
+export function createPortalEntity(
+  world: WorldState,
+  ownerId: string,
+  startDegrees: number,
+): Entity {
+  const centerX = ARENA_WIDTH / 2;
+  const centerY = ARENA_HEIGHT / 2;
+  const rad = degToRad(startDegrees);
+  const id = world.nextEntityId++;
+  const entity: Entity = {
+    id,
+    type: EntityType.Portal,
+    ownerId,
+    position: {
+      x: centerX + Math.cos(rad) * DEFAULT_ORBIT_DISTANCE,
+      y: centerY + Math.sin(rad) * DEFAULT_ORBIT_DISTANCE,
+    },
+    velocity: { vx: 0, vy: 0 },
+    rotation: { angle: 0, rotateSpeed: 0 },
+    portal: {
+      orbitDegrees: startDegrees,
+      playerId: ownerId,
+      damageAccumulated: 0,
+    },
+  };
+  world.entities.set(id, entity);
+  return entity;
 }
 
 // ---- Simulation tick ----
@@ -89,7 +105,7 @@ export type PlayerInputs = Map<string, InputState>;
 
 /**
  * Advance the world by one tick.
- * Pure-ish: mutates the world in-place for performance.
+ * Mutates the world in-place for performance.
  */
 export function simulationTick(world: WorldState, inputs: PlayerInputs): void {
   world.tick++;
@@ -101,7 +117,9 @@ export function simulationTick(world: WorldState, inputs: PlayerInputs): void {
       case EntityType.Ship:
         stepShip(entity, inputs.get(entity.ownerId));
         break;
-      // Other entity types will be added in later phases
+      case EntityType.Portal:
+        stepPortal(entity);
+        break;
     }
   }
 }
@@ -115,6 +133,20 @@ function stepShip(entity: Entity, input: InputState | undefined): void {
 
   // Physics (thrust + friction + movement + bounce)
   stepEntityPhysics(entity, input.thrust);
+}
+
+function stepPortal(entity: Entity): void {
+  if (!entity.portal) return;
+
+  // Orbit around arena center
+  entity.portal.orbitDegrees += PORTAL_ARC_SPEED;
+  if (entity.portal.orbitDegrees >= 360) entity.portal.orbitDegrees -= 360;
+
+  const centerX = ARENA_WIDTH / 2;
+  const centerY = ARENA_HEIGHT / 2;
+  const rad = degToRad(entity.portal.orbitDegrees);
+  entity.position.x = centerX + Math.cos(rad) * DEFAULT_ORBIT_DISTANCE;
+  entity.position.y = centerY + Math.sin(rad) * DEFAULT_ORBIT_DISTANCE;
 }
 
 // ---- Snapshot serialization ----

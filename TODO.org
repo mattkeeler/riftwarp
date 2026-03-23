@@ -14,18 +14,18 @@
 ** DONE Implement client WebSocketClient (connect, send/receive, snapshot buffer)
 ** DONE Implement client InputManager (keyboard state, 20Hz send with sequence numbers)
 ** DONE Implement client rendering with Pixi.js (camera follow, arena grid, ship rendering)
-* Phase 3: Ship Movement & Physics [0/5]
-** TODO Implement core physics functions in shared (thrust, friction, movement, bounce, rotate)
-** TODO Port all 8 ship stat arrays from g_fighterData to shared/src/shipData.ts
-** TODO Port ship polygon vertex data from g_shipPoints to shared/src/shipGeometry.ts
-** TODO Implement Ship entity with position, velocity, angle, health, shipType
-** TODO Implement ShipRenderer (draw polygon via Pixi.Graphics + health bar + shield)
-* Phase 4: Arena, Viewport, Stars, Wormholes [0/5]
-** TODO Implement ViewportManager (camera follows local player)
-** TODO Implement StarField (70 parallax stars, two layers)
-** TODO Implement ArenaRenderer (boundary, grid lines, center box)
-** TODO Implement Portal entity (orbit center at distance=270, ARC_SPEED=0.5 deg/tick)
-** TODO Implement PointerRenderer (off-screen directional arrows to enemy wormholes)
+* Phase 3: Ship Movement & Physics [5/5]
+** DONE Implement core physics functions in shared (thrust, friction, movement, bounce, rotate)
+** DONE Port all 8 ship stat arrays from g_fighterData to shared/src/shipData.ts
+** DONE Port ship polygon vertex data from g_shipPoints to shared/src/shipGeometry.ts
+** DONE Implement Ship entity with position, velocity, angle, health, shipType
+** DONE Implement ShipRenderer (draw polygon via Pixi.Graphics + health bar + ship selection 1-8)
+* Phase 4: Arena, Viewport, Stars, Wormholes [5/5]
+** DONE Implement ViewportManager (camera follows local player)
+** DONE Implement StarField (70 parallax stars, two layers)
+** DONE Implement ArenaRenderer (boundary, grid lines)
+** DONE Implement Portal entity (orbit center at distance=270, ARC_SPEED=0.5 deg/tick, animated rings)
+** DONE Implement PointerRenderer (off-screen directional arrows to enemy wormholes)
 * Phase 5: Combat System [0/5]
 ** TODO Implement collision detection (Rect-Rect, Rect-Poly, Poly-Poly) in shared
 ** TODO Port gun upgrade levels from g_shotData (4 levels)

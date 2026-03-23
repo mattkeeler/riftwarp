@@ -29,6 +29,9 @@ wss.on('connection', (ws) => {
         case 'input':
           room.updateInput(client.id, msg.input, msg.seq);
           break;
+        case 'selectShip':
+          room.changeShip(client.id, msg.shipType);
+          break;
         case 'login':
           client.username = msg.username;
           break;
