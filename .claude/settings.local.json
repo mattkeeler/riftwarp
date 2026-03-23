@@ -15,7 +15,11 @@
       "mcp__Claude_Preview__preview_start",
       "Bash(cat /Users/mkeeler/git/mine/riftwarp/node_modules/.pnpm/react-dom@*/node_modules/react-dom/client.js)",
       "Bash(node -e \"const m = require\\(''/Users/mkeeler/git/mine/riftwarp/node_modules/.pnpm/react-dom@19.2.4_react@19.2.4/node_modules/react-dom/client.js''\\); console.log\\(Object.keys\\(m\\)\\)\")",
-      "Bash(gh api:*)"
+      "Bash(gh api:*)",
+      "mcp__github__get_file_contents",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(ls /tmp/wormhole-redux/src/client/*.java)"
     ]
   }
 }

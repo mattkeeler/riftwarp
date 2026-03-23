@@ -62,23 +62,49 @@ export const SELF_USE_TYPES = [
 ];
 
 /**
- * Generate a random powerup type, following the original algorithm:
- * - 1/3 chance: self-use (0-5)
+ * Generate a random powerup type, following the original time-gated algorithm:
+ * - 1/3 chance: self-use (0-5) with time-based substitutions
  * - 2/3 chance: sendable (6-19), weighted by SENDABLE_SPAWN_WEIGHTS
+ *
+ * Time gates (from original Java source):
+ * - After 60s: nukes can appear
+ * - After 80s: invulnerability → heat seekers or nukes
+ * - After 120s: invulnerability → heat seekers, clear screen → turrets
  */
 export function generateRandomPowerupType(gameTimeTicks: number): PowerupType {
+  const TICKS_PER_SEC = 20;
+  const gameTimeSec = gameTimeTicks / TICKS_PER_SEC;
+
   if (Math.random() < 1 / 3) {
-    // Self-use
-    return SELF_USE_TYPES[Math.floor(Math.random() * SELF_USE_TYPES.length)];
+    // Self-use with time-based substitutions
+    let pType = SELF_USE_TYPES[Math.floor(Math.random() * SELF_USE_TYPES.length)];
+
+    // Time-gated substitutions (matches original genPowerup logic)
+    if (gameTimeSec > 120) {
+      if (pType === PowerupType.Invulnerability) pType = PowerupType.HeatSeeker;
+      if (pType === PowerupType.ClearScreen) pType = PowerupType.Turret;
+    } else if (gameTimeSec > 80) {
+      if (pType === PowerupType.Invulnerability) {
+        pType = Math.random() < 0.5 ? PowerupType.HeatSeeker : PowerupType.Nuke;
+      }
+    }
+
+    return pType;
   }
 
-  // Sendable — weighted random
+  // Sendable — weighted random, with nuke gating
   const entries = Object.entries(SENDABLE_SPAWN_WEIGHTS) as Array<[string, number]>;
-  const totalWeight = entries.reduce((sum, [, w]) => sum + w, 0);
+  // Filter out nukes before 60 seconds
+  const filtered = entries.filter(([typeStr]) => {
+    if (Number(typeStr) === PowerupType.Nuke && gameTimeSec < 60) return false;
+    return true;
+  });
+
+  const totalWeight = filtered.reduce((sum, [, w]) => sum + w, 0);
   if (totalWeight === 0) return PowerupType.UFO;
 
   let roll = Math.random() * totalWeight;
-  for (const [typeStr, weight] of entries) {
+  for (const [typeStr, weight] of filtered) {
     roll -= weight;
     if (roll <= 0) return Number(typeStr) as PowerupType;
   }

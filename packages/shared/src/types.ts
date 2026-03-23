@@ -74,6 +74,8 @@ export interface Portal {
   orbitDegrees: number;
   playerId: string;
   damageAccumulated: number;
+  /** Queue of pending enemy spawns: [powerupType, spawnAtTick, senderOwnerId][] */
+  spawnQueue: Array<{ powerupType: PowerupType; spawnAtTick: number; senderOwnerId: string }>;
 }
 
 export interface Tracking {
@@ -108,6 +110,10 @@ export interface Entity {
   tracking?: Tracking;
   ai?: AIBehavior;
   powerupType?: PowerupType; // for powerup entities
+  /** Scarab: powerup type being carried back to portal */
+  scarabCarrying?: PowerupType;
+  /** Flagship attractor active state (stored on entity for snapshot) */
+  attractorActive?: boolean;
   dead?: boolean;
 }
 

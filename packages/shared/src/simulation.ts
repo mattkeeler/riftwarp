@@ -114,6 +114,7 @@ export function createPortalEntity(
       orbitDegrees: startDegrees,
       playerId: ownerId,
       damageAccumulated: 0,
+      spawnQueue: [],
     },
   };
   world.entities.set(id, entity);
@@ -233,10 +234,10 @@ export function simulationTick(world: WorldState, inputs: PlayerInputs): void {
         stepShip(world, entity, inputs.get(entity.ownerId));
         break;
       case EntityType.Portal:
-        stepPortal(entity);
+        stepPortal(world, entity);
         break;
       case EntityType.Bullet:
-        stepBullet(entity);
+        stepBullet(world, entity);
         break;
       case EntityType.Powerup:
         stepPowerup(entity);
@@ -294,12 +295,15 @@ function stepShip(world: WorldState, entity: Entity, input: InputState | undefin
     };
   }
 
+  // Check if flagship attractor is active — disables thrust, fire, and tracking
+  const attractorOn = flagshipAttractorActive.get(entity.ownerId) ?? false;
+
   const rotDir = (effectiveInput.left ? -1 : 0) + (effectiveInput.right ? 1 : 0);
   applyRotation(entity, rotDir as -1 | 0 | 1);
-  stepEntityPhysics(entity, effectiveInput.thrust);
+  stepEntityPhysics(entity, attractorOn ? false : effectiveInput.thrust);
 
-  // Primary fire
-  if (effectiveInput.fire && entity.shipStats) {
+  // Primary fire (disabled during attractor)
+  if (!attractorOn && effectiveInput.fire && entity.shipStats) {
     tryFireBullets(world, entity);
   }
 
@@ -321,9 +325,14 @@ function stepShip(world: WorldState, entity: Entity, input: InputState | undefin
     tryUseSpecial(world, entity);
   }
 
-  // Tracking cannon auto-fire
-  if (entity.shipStats && entity.shipStats.trackingCannons > 0) {
+  // Tracking cannon auto-fire (disabled during attractor)
+  if (!attractorOn && entity.shipStats && entity.shipStats.trackingCannons > 0) {
     stepTrackingCannons(world, entity);
+  }
+
+  // Flagship attractor: attract powerups, repulse enemies
+  if (attractorOn) {
+    applyAttractorForces(world, entity);
   }
 }
 
@@ -340,10 +349,10 @@ function tryUseSpecial(world: WorldState, ship: Entity): void {
 
   switch (stats.specialType) {
     case SpecialType.TurtleCannon: {
-      // Destroy all nearby enemies, costs 20 HP
+      // Destroy all visible enemies; 75% chance costs 20 HP
       if (!ship.health || ship.health.current <= 20) break;
-      ship.health.current -= 20;
-      specialCooldowns.set(ship.ownerId, 40); // 2s cooldown
+      if (Math.random() < 0.75) ship.health.current -= 20;
+      specialCooldowns.set(ship.ownerId, 10); // 10-cycle cooldown (matches original)
 
       for (const e of world.entities.values()) {
         if (e.dead) continue;
@@ -361,7 +370,7 @@ function tryUseSpecial(world: WorldState, ship: Entity): void {
 
     case SpecialType.Shapeshifter: {
       // Toggle between Squid and Tank forms
-      specialCooldowns.set(ship.ownerId, 20); // 1s cooldown
+      specialCooldowns.set(ship.ownerId, 4); // 4-cycle cooldown (matches original)
       const currentType = stats.shipType;
       const newType = currentType === ShipType.Squid ? ShipType.Tank : ShipType.Squid;
       const newDef = SHIP_DEFINITIONS[newType];
@@ -380,14 +389,14 @@ function tryUseSpecial(world: WorldState, ship: Entity): void {
       const charges = hunterCharges.get(ship.ownerId) ?? 3;
       if (charges <= 0) break;
       hunterCharges.set(ship.ownerId, charges - 1);
-      specialCooldowns.set(ship.ownerId, 20); // 1s cooldown
+      specialCooldowns.set(ship.ownerId, 4); // 4-cycle cooldown (matches original)
 
       // Schedule next charge regen
       if (!hunterRegenTick.has(ship.ownerId)) {
         hunterRegenTick.set(ship.ownerId, world.tick + 400); // 20s at 20Hz
       }
 
-      // Fire 17 missiles in a spread
+      // Fire 17 missiles in a spread toward a point 200px ahead
       const baseAngle = ship.rotation.angle;
       for (let i = 0; i < 17; i++) {
         const spread = (i - 8) * 8; // -64 to +64 degrees
@@ -395,15 +404,16 @@ function tryUseSpecial(world: WorldState, ship: Entity): void {
         const rad = degToRad(angle);
         const spawnX = ship.position.x + Math.cos(rad) * 15;
         const spawnY = ship.position.y + Math.sin(rad) * 15;
-        createEnemyEntity(
-          world, EntityType.HeatSeeker,
-          ship.ownerId, '', // target will be found by tracking AI
-          spawnX, spawnY, angle,
+
+        // Create as friendly bullets that track nearest enemy
+        const speed = 7;
+        const bullet = createBulletEntity(
+          world, ship.ownerId, spawnX, spawnY,
+          Math.cos(rad) * speed, Math.sin(rad) * speed,
+          8, 4,
         );
-        // Override: these missiles track enemies, not the ship owner
-        const missile = Array.from(world.entities.values()).pop()!;
-        missile.ownerId = ''; // no specific target — track nearest enemy
-        missile.lifespan = { remaining: 200 };
+        bullet.lifespan = { remaining: 200 };
+        bullet.ai = { type: 'track', targetId: null }; // homing behavior
       }
       break;
     }
@@ -412,8 +422,37 @@ function tryUseSpecial(world: WorldState, ship: Entity): void {
       // Toggle attractor/repulser field
       const active = flagshipAttractorActive.get(ship.ownerId) ?? false;
       flagshipAttractorActive.set(ship.ownerId, !active);
-      specialCooldowns.set(ship.ownerId, 10);
+      ship.attractorActive = !active;
+      specialCooldowns.set(ship.ownerId, 4); // 4-cycle cooldown (matches original)
       break;
+    }
+  }
+}
+
+/** Flagship attractor: attract powerups toward ship, repulse enemies away */
+function applyAttractorForces(world: WorldState, ship: Entity): void {
+  const ATTRACTOR_RANGE = 300;
+  for (const e of world.entities.values()) {
+    if (e.dead) continue;
+    if (e.id === ship.id) continue;
+
+    const dx = e.position.x - ship.position.x;
+    const dy = e.position.y - ship.position.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < 1 || dist > ATTRACTOR_RANGE) continue;
+
+    const strength = 0.3 * ((ATTRACTOR_RANGE - dist) / ATTRACTOR_RANGE);
+    const nx = dx / dist;
+    const ny = dy / dist;
+
+    if (e.type === EntityType.Powerup) {
+      // Attract powerups toward ship
+      e.velocity.vx -= nx * strength;
+      e.velocity.vy -= ny * strength;
+    } else if (isEnemyType(e.type)) {
+      // Repulse enemies (weaker, 20% strength like original)
+      e.velocity.vx += nx * strength * 0.2;
+      e.velocity.vy += ny * strength * 0.2;
     }
   }
 }
@@ -516,7 +555,39 @@ function tryFirePowerup(world: WorldState, ship: Entity): void {
   // Powerup bullets don't count against normal bullet limit
 }
 
-function stepBullet(entity: Entity): void {
+function stepBullet(world: WorldState, entity: Entity): void {
+  // Homing bullets (Hunter missiles) — steer toward nearest enemy
+  if (entity.ai?.type === 'track') {
+    let nearestEnemy: Entity | undefined;
+    let nearestDist = Infinity;
+    for (const e of world.entities.values()) {
+      if (e.dead) continue;
+      if (!isEnemyType(e.type)) continue;
+      const dx = e.position.x - entity.position.x;
+      const dy = e.position.y - entity.position.y;
+      const dist = dx * dx + dy * dy;
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearestEnemy = e;
+      }
+    }
+    if (nearestEnemy) {
+      const dx = nearestEnemy.position.x - entity.position.x;
+      const dy = nearestEnemy.position.y - entity.position.y;
+      const targetAngle = Math.atan2(dy, dx);
+      const currentAngle = Math.atan2(entity.velocity.vy, entity.velocity.vx);
+      let diff = targetAngle - currentAngle;
+      if (diff > Math.PI) diff -= 2 * Math.PI;
+      if (diff < -Math.PI) diff += 2 * Math.PI;
+      const maxTurn = 0.15; // radians per tick
+      const turn = Math.abs(diff) < maxTurn ? diff : (diff > 0 ? maxTurn : -maxTurn);
+      const newAngle = currentAngle + turn;
+      const speed = Math.sqrt(entity.velocity.vx ** 2 + entity.velocity.vy ** 2);
+      entity.velocity.vx = Math.cos(newAngle) * speed;
+      entity.velocity.vy = Math.sin(newAngle) * speed;
+    }
+  }
+
   applyMovement(entity);
   handleBounce(entity);
   if (entity.lifespan) {
@@ -534,7 +605,7 @@ function stepPowerup(entity: Entity): void {
   }
 }
 
-function stepPortal(entity: Entity): void {
+function stepPortal(world: WorldState, entity: Entity): void {
   if (!entity.portal) return;
   entity.portal.orbitDegrees += PORTAL_ARC_SPEED;
   if (entity.portal.orbitDegrees >= 360) entity.portal.orbitDegrees -= 360;
@@ -543,6 +614,29 @@ function stepPortal(entity: Entity): void {
   const rad = degToRad(entity.portal.orbitDegrees);
   entity.position.x = centerX + Math.cos(rad) * DEFAULT_ORBIT_DISTANCE;
   entity.position.y = centerY + Math.sin(rad) * DEFAULT_ORBIT_DISTANCE;
+
+  // Process spawn queue (enemies spawn after 30-tick delay)
+  const queue = entity.portal.spawnQueue;
+  for (let i = queue.length - 1; i >= 0; i--) {
+    if (world.tick >= queue[i].spawnAtTick) {
+      const entry = queue.splice(i, 1)[0];
+      spawnEnemiesFromPortal(world, entity, entry.powerupType, entry.senderOwnerId);
+    }
+  }
+
+  // Random enemy spawning after 40s (Inflater 40%, UFO 40%, Gunship 20%)
+  if (world.tick > SPAWN_START_TICK) {
+    const rate = world.tick > SPAWN_RATE_FAST_TICK ? SPAWN_RATE_FAST : SPAWN_RATE_INITIAL;
+    if (Math.random() < 1 / rate) {
+      const roll = Math.random();
+      const enemyType = roll < 0.4 ? EntityType.Inflater
+        : roll < 0.8 ? EntityType.UFO
+        : EntityType.Gunship;
+      const portalOwnerId = entity.portal.playerId;
+      createEnemyEntity(world, enemyType, '', portalOwnerId,
+        entity.position.x, entity.position.y, Math.random() * 360);
+    }
+  }
 }
 
 function stepLifespan(entity: Entity): void {
@@ -679,7 +773,24 @@ function createEnemyEntity(
   return entity;
 }
 
-/** Spawn enemies from a portal when a powerup bullet hits it */
+const PORTAL_SPAWN_DELAY = 30; // 30 ticks (~1.5s) delay before enemies spawn
+
+/** Queue enemies to spawn from a portal after a delay */
+function queueEnemiesFromPortal(
+  world: WorldState,
+  portal: Entity,
+  powerupType: PowerupType,
+  senderOwnerId: string,
+): void {
+  if (!portal.portal) return;
+  portal.portal.spawnQueue.push({
+    powerupType,
+    spawnAtTick: world.tick + PORTAL_SPAWN_DELAY,
+    senderOwnerId,
+  });
+}
+
+/** Actually spawn enemies from a portal (called when queue entry is ready) */
 function spawnEnemiesFromPortal(
   world: WorldState,
   portal: Entity,
@@ -690,9 +801,14 @@ function spawnEnemiesFromPortal(
   if (!spawn) return;
 
   const portalOwnerId = portal.portal?.playerId ?? portal.ownerId;
+  // Ghost Pud count scales with game time (proxy for upgrade level)
+  let count = spawn.count;
+  if (spawn.type === EntityType.GhostPud) {
+    count = Math.min(1 + Math.floor(world.tick / (60 * 20)), 5); // +1 per minute, max 5
+  }
 
-  for (let i = 0; i < spawn.count; i++) {
-    const angleOffset = (i * 360) / spawn.count + Math.random() * 30;
+  for (let i = 0; i < count; i++) {
+    const angleOffset = (i * 360) / count + Math.random() * 30;
     createEnemyEntity(
       world, spawn.type,
       senderOwnerId, portalOwnerId,
@@ -746,8 +862,7 @@ function stepEnemy(world: WorldState, entity: Entity): void {
       break;
 
     case EntityType.Scarab:
-      orbitPortal(world, entity);
-      enemyFireAtTarget(world, entity, 20, 8);
+      stepScarab(world, entity);
       break;
 
     case EntityType.Artillery:
@@ -984,6 +1099,65 @@ function sweepBeamDamage(world: WorldState, entity: Entity): void {
   }
 }
 
+/** Scarab: hunts powerups, picks them up, carries to portal, delivers as attack */
+function stepScarab(world: WorldState, entity: Entity): void {
+  if (entity.scarabCarrying !== undefined) {
+    // Carrying a powerup — navigate back to portal
+    let targetPortal: Entity | undefined;
+    for (const e of world.entities.values()) {
+      if (e.type === EntityType.Portal && e.ownerId === entity.ownerId && !e.dead) {
+        targetPortal = e;
+        break;
+      }
+    }
+    if (targetPortal) {
+      const dx = targetPortal.position.x - entity.position.x;
+      const dy = targetPortal.position.y - entity.position.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const targetAngle = Math.atan2(dy, dx) * (180 / Math.PI);
+      entity.rotation.angle = targetAngle;
+
+      // If close enough to portal, deliver the powerup
+      if (dist < 30) {
+        queueEnemiesFromPortal(world, targetPortal, entity.scarabCarrying, entity.ownerId);
+        entity.scarabCarrying = undefined;
+      }
+    } else {
+      wander(entity);
+    }
+  } else {
+    // Not carrying — hunt nearest powerup on the field
+    let nearestPowerup: Entity | undefined;
+    let nearestDist = Infinity;
+    for (const e of world.entities.values()) {
+      if (e.dead || e.type !== EntityType.Powerup) continue;
+      if (e.powerupType === undefined) continue;
+      const dx = e.position.x - entity.position.x;
+      const dy = e.position.y - entity.position.y;
+      const dist = dx * dx + dy * dy;
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearestPowerup = e;
+      }
+    }
+
+    if (nearestPowerup) {
+      // Navigate toward it
+      const dx = nearestPowerup.position.x - entity.position.x;
+      const dy = nearestPowerup.position.y - entity.position.y;
+      entity.rotation.angle = Math.atan2(dy, dx) * (180 / Math.PI);
+
+      // Pick it up if close enough
+      if (nearestDist < 15 * 15) {
+        entity.scarabCarrying = nearestPowerup.powerupType;
+        nearestPowerup.dead = true;
+      }
+    } else {
+      wander(entity);
+    }
+  }
+}
+
 /** Track toward the target player's ship */
 function trackTarget(world: WorldState, entity: Entity): void {
   // Find target ship
@@ -1111,8 +1285,8 @@ function resolveCollisions(world: WorldState): void {
       const dy = bullet.position.y - portal.position.y;
       if (dx * dx + dy * dy < 30 * 30) {
         if (bullet.powerupType !== undefined) {
-          // Powerup bullet: spawn enemies from portal
-          spawnEnemiesFromPortal(world, portal, bullet.powerupType!, bullet.ownerId);
+          // Powerup bullet: queue enemies to spawn from portal after delay
+          queueEnemiesFromPortal(world, portal, bullet.powerupType!, bullet.ownerId);
         } else {
           // Regular bullet: accumulate damage on portal
           if (portal.portal) {
@@ -1149,6 +1323,11 @@ function resolveCollisions(world: WorldState): void {
           if (enemy.health.current <= 0) {
             enemy.dead = true;
             createExplosionEntity(world, enemy.ownerId, enemy.position.x, enemy.position.y);
+            // Scarab drops carried powerup + bonus random powerup on death
+            if (enemy.type === EntityType.Scarab && enemy.scarabCarrying !== undefined) {
+              createPowerupEntity(world, enemy.position.x, enemy.position.y, enemy.scarabCarrying);
+              createPowerupEntity(world, enemy.position.x + 10, enemy.position.y, generateRandomPowerupType(world.tick));
+            }
           }
         }
         bullet.dead = true;
@@ -1214,20 +1393,26 @@ function resolveCollisions(world: WorldState): void {
       const dx = powerup.position.x - ship.position.x;
       const dy = powerup.position.y - ship.position.y;
       if (dx * dx + dy * dy < (POWERUP_COLLISION_SIZE / 2 + 15) ** 2) {
-        collectPowerup(ship, powerup.powerupType);
+        collectPowerup(world, ship, powerup.powerupType);
         powerup.dead = true;
       }
     }
   }
 }
 
-function collectPowerup(ship: Entity, pType: PowerupType): void {
+function collectPowerup(world: WorldState, ship: Entity, pType: PowerupType): void {
   const def = POWERUP_DEFINITIONS[pType];
 
   if (def.selfUse) {
     // Apply immediately
-    applySelfUsePowerup(ship, pType);
+    applySelfUsePowerup(ship, pType, world);
   } else {
+    // Hunter: picking up HeatSeeker powerup refills missile charges to 3
+    if (pType === PowerupType.HeatSeeker && ship.shipStats?.specialType === SpecialType.HeatSeekerLauncher) {
+      hunterCharges.set(ship.ownerId, 3);
+      return; // consumed, not added to inventory
+    }
+
     // Add to inventory (max 5)
     if (!ship.powerupInventory) ship.powerupInventory = { items: [] };
     if (ship.powerupInventory.items.length < MAX_POWERUPS_INVENTORY) {
@@ -1236,7 +1421,7 @@ function collectPowerup(ship: Entity, pType: PowerupType): void {
   }
 }
 
-function applySelfUsePowerup(ship: Entity, pType: PowerupType): void {
+function applySelfUsePowerup(ship: Entity, pType: PowerupType, world?: WorldState): void {
   switch (pType) {
     case PowerupType.GunUpgrade:
       if (ship.shipStats && ship.shipStats.gunLevel < GUN_LEVELS.length - 1) {
@@ -1257,7 +1442,20 @@ function applySelfUsePowerup(ship: Entity, pType: PowerupType): void {
       ship.shield = { ticksLeft: 450 }; // ~22 seconds at 20Hz
       break;
     case PowerupType.ClearScreen:
-      // TODO: destroy nearby enemies (Phase 8)
+      // Destroy all enemies targeting this ship in visible range
+      if (world) {
+        for (const e of Array.from(world.entities.values())) {
+          if (e.dead) continue;
+          if (!isEnemyType(e.type)) continue;
+          if (e.ownerId !== ship.ownerId) continue;
+          const dx = e.position.x - ship.position.x;
+          const dy = e.position.y - ship.position.y;
+          if (dx * dx + dy * dy < 400 * 400) {
+            e.dead = true;
+            createExplosionEntity(world, e.ownerId, e.position.x, e.position.y);
+          }
+        }
+      }
       break;
     case PowerupType.ExtraHealth:
       if (ship.health) {
@@ -1313,6 +1511,12 @@ function entityToSnapshot(e: Entity): SnapshotEntity {
   }
   if (e.portal) {
     snap.portalDamage = e.portal.damageAccumulated;
+  }
+  if (e.attractorActive) {
+    snap.attractorActive = true;
+  }
+  if (e.scarabCarrying !== undefined) {
+    snap.scarabCarrying = e.scarabCarrying;
   }
   return snap;
 }

@@ -94,6 +94,8 @@ export interface SnapshotEntity {
   lifespan?: number;
   dead?: boolean;
   portalDamage?: number;
+  attractorActive?: boolean;
+  scarabCarrying?: PowerupType;
 }
 
 // ---- Info types ----

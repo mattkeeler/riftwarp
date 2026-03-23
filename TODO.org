@@ -96,8 +96,18 @@
 ** DONE Implement 14 distinct enemy renderers (saucer, spiky mine, pulsing nuke, beetle, electric EMP, ghost blob, etc.)
 * Phase 16: Portal Damage Accumulation [1/1]
 ** DONE Implement portal damage tracking (regular bullets accumulate damage, 150 dmg drops random powerup)
-* Backlog [0/4]
+* Phase 17: Mechanics Accuracy Pass [9/9]
+** DONE Fix Turtle special: 75% chance costs 20 HP (was always 100%), 10-cycle cooldown
+** DONE Fix Flash special: 4-cycle cooldown (was 20)
+** DONE Fix Hunter special: 4-cycle cooldown, refill charges on HeatSeeker powerup pickup
+** DONE Implement Flagship attractor/repulser force field physics (attract powerups, repulse enemies at 20% strength, disables thrust/fire/tracking while active)
+** DONE Implement Scarab powerup theft (hunts powerups, carries to portal, delivers as attack; drops carried + bonus random powerup on death)
+** DONE Implement portal spawn queue (30-tick delay between powerup hit and enemy spawn, matching original)
+** DONE Implement random portal enemy spawning after 40s (Inflater 40%, UFO 40%, Gunship 20%)
+** DONE Implement Ghost Pud count scaling with game time (+1 per minute, max 5)
+** DONE Implement powerup generation time-gating (nukes after 60s, invuln→seekers/nukes after 80s, invuln→seekers + clear→turrets after 120s)
+** DONE Implement ClearScreen powerup (destroys all enemies targeting ship within 400px)
+** DONE Implement Hunter homing missiles as friendly bullets that steer toward nearest enemy
+* Backlog [0/2]
 ** TODO Explore visual indicators for portal damage (flicker, color shift, particle effects)
-** TODO Implement Flagship attractor/repulser force field physics (currently toggle-only)
 ** TODO Improve bot AI (aim powerups at enemy portals, use ship specials, dodge bullets)
-** TODO Implement wormhole damage accumulation powerup queue (30-tick delay between drops)
