@@ -22,6 +22,7 @@ import {
 } from '@riftwarp/shared';
 import type { ConnectedClient, ConnectionManager } from './ConnectionManager.js';
 import { Ticker } from './Ticker.js';
+import { BotController } from './BotController.js';
 
 interface PlayerState {
   shipType: ShipType;
@@ -30,17 +31,23 @@ interface PlayerState {
   alive: boolean;
   wins: number;
   slot: number;
+  isBot: boolean;
 }
+
+const BOT_NAMES = ['Ziggy', 'Nova', 'Blitz', 'Havoc', 'Shade', 'Volt', 'Drift', 'Spark'];
+const BOT_SHIPS = [ShipType.Squid, ShipType.Tank, ShipType.Hunter, ShipType.Rabbit, ShipType.Flash, ShipType.Turtle];
 
 export class GameRoom {
   private world: WorldState = createWorldState();
   private ticker: Ticker;
   private playerInputs: PlayerInputs = new Map();
   private players = new Map<string, PlayerState>();
+  private bots = new Map<string, BotController>();
   private state: RoomState = RoomState.Idle;
   private countdownTicks = 0;
   private gameOverTicks = 0;
   private nextSlot = 0;
+  private nextBotId = 0;
 
   constructor(private connections: ConnectionManager) {
     this.ticker = new Ticker((_tick) => this.onTick(), SERVER_TICK_MS);
@@ -55,6 +62,51 @@ export class GameRoom {
     this.ticker.stop();
   }
 
+  addBot(difficulty: 'easy' | 'medium' | 'hard' = 'medium'): string {
+    const botId = `bot_${++this.nextBotId}`;
+    const botName = BOT_NAMES[this.nextBotId % BOT_NAMES.length];
+    const shipType = BOT_SHIPS[Math.floor(Math.random() * BOT_SHIPS.length)];
+    const slot = this.nextSlot++;
+
+    const ps: PlayerState = {
+      shipType,
+      shipEntityId: null,
+      portalEntityId: null,
+      alive: false,
+      wins: 0,
+      slot,
+      isBot: true,
+    };
+    this.players.set(botId, ps);
+
+    const bot = new BotController(botId, difficulty);
+    this.bots.set(botId, bot);
+
+    this.spawnPlayer(botId);
+    this.rebalancePortals();
+    this.broadcastGameStart();
+
+    console.log(`[room] bot ${botName} (${botId}) added as ${ShipType[shipType]}`);
+    return botId;
+  }
+
+  removeBot(botId: string): void {
+    this.despawnPlayer(botId);
+    this.players.delete(botId);
+    this.playerInputs.delete(botId);
+    this.bots.delete(botId);
+    this.rebalancePortals();
+  }
+
+  fillWithBots(targetCount: number = 3): void {
+    const humanCount = Array.from(this.players.values()).filter((p) => !p.isBot).length;
+    const needed = Math.max(0, targetCount - this.players.size);
+    for (let i = 0; i < needed; i++) {
+      this.addBot(i < 1 ? 'easy' : 'medium');
+    }
+    if (needed > 0) console.log(`[room] filled with ${needed} bots (${humanCount} humans)`);
+  }
+
   addPlayer(client: ConnectedClient, shipType: ShipType = ShipType.Tank): void {
     const slot = this.nextSlot++;
     const ps: PlayerState = {
@@ -64,6 +116,7 @@ export class GameRoom {
       alive: false,
       wins: 0,
       slot,
+      isBot: false,
     };
     this.players.set(client.id, ps);
 
@@ -277,6 +330,14 @@ export class GameRoom {
       }
     }
 
+    // Generate bot inputs
+    for (const [botId, bot] of this.bots) {
+      const ps = this.players.get(botId);
+      if (ps && ps.alive) {
+        this.playerInputs.set(botId, bot.generateInput(this.world));
+      }
+    }
+
     // Step simulation
     simulationTick(this.world, this.playerInputs);
 
@@ -342,6 +403,10 @@ export class GameRoom {
   }
 
   private getUsername(clientId: string): string {
+    if (clientId.startsWith('bot_')) {
+      const num = parseInt(clientId.split('_')[1]);
+      return BOT_NAMES[num % BOT_NAMES.length] ?? clientId;
+    }
     return this.connections.getClient(clientId)?.username ?? `Player${clientId}`;
   }
 }

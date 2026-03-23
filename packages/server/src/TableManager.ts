@@ -56,6 +56,9 @@ export class TableManager {
     // Auto-join the creator
     this.joinTable(client, tableId);
 
+    // Auto-fill with bots
+    room.fillWithBots(3);
+
     return tableId;
   }
 

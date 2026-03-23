@@ -80,6 +80,6 @@
 * Phase 12: Audio [0/2]
 ** TODO Implement AudioManager (Web Audio API, enable/disable toggle)
 ** TODO Add 5 sound effects (fire, thrust loop, explosion, powerup collect, silence)
-* Phase 13: AI Bots [0/2]
-** TODO Implement BotController (navigate, collect, fight, use specials, difficulty levels)
-** TODO Implement BotManager (fill empty table slots with bots)
+* Phase 13: AI Bots [2/2]
+** DONE Implement BotController (navigate, chase players, collect powerups, fight, fire, difficulty levels)
+** DONE Implement auto-fill with bots (3 bots on table creation, named Ziggy/Nova/Blitz/etc.)
