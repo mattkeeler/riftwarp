@@ -273,17 +273,37 @@ export function simulationTick(world: WorldState, inputs: PlayerInputs): void {
 function stepShip(world: WorldState, entity: Entity, input: InputState | undefined): void {
   if (!input) return;
 
-  const rotDir = (input.left ? -1 : 0) + (input.right ? 1 : 0);
+  // EMP countdown
+  if (entity.emp && entity.emp.ticksLeft > 0) {
+    entity.emp.ticksLeft--;
+    if (entity.emp.ticksLeft <= 0) entity.emp = undefined;
+  }
+
+  // Scramble controls if EMP active
+  let effectiveInput = input;
+  if (entity.emp && entity.emp.ticksLeft > 0) {
+    const s = entity.emp.scrambleType;
+    effectiveInput = {
+      left: s === 0 ? input.right : input.left,
+      right: s === 0 ? input.left : input.right,
+      thrust: s === 1 ? false : input.thrust,
+      fire: s === 2 ? false : input.fire,
+      secondaryFire: input.secondaryFire,
+      special: input.special,
+    };
+  }
+
+  const rotDir = (effectiveInput.left ? -1 : 0) + (effectiveInput.right ? 1 : 0);
   applyRotation(entity, rotDir as -1 | 0 | 1);
-  stepEntityPhysics(entity, input.thrust);
+  stepEntityPhysics(entity, effectiveInput.thrust);
 
   // Primary fire
-  if (input.fire && entity.shipStats) {
+  if (effectiveInput.fire && entity.shipStats) {
     tryFireBullets(world, entity);
   }
 
   // Secondary fire (fire powerup from inventory)
-  if (input.secondaryFire && entity.powerupInventory && entity.powerupInventory.items.length > 0) {
+  if (effectiveInput.secondaryFire && entity.powerupInventory && entity.powerupInventory.items.length > 0) {
     tryFirePowerup(world, entity);
   }
 
@@ -681,28 +701,130 @@ function spawnEnemiesFromPortal(
   }
 }
 
+// Per-enemy fire cooldowns
+const enemyFireCooldowns = new Map<number, number>();
+
 /** Step an enemy entity each tick */
 function stepEnemy(world: WorldState, entity: Entity): void {
   // Lifespan
   if (entity.lifespan) {
     entity.lifespan.remaining--;
-    if (entity.lifespan.remaining <= 0) { entity.dead = true; return; }
+    if (entity.lifespan.remaining <= 0) {
+      // Nuke: AOE explosion on death/expiry
+      if (entity.type === EntityType.Nuke) {
+        nukeExplode(world, entity);
+      }
+      entity.dead = true;
+      return;
+    }
   }
 
-  // AI behavior
-  if (entity.ai) {
-    switch (entity.ai.type) {
-      case 'track':
-        trackTarget(world, entity);
-        break;
-      case 'orbit':
-        orbitPortal(world, entity);
-        break;
-      case 'wander':
-        wander(entity);
-        break;
-      // 'static' enemies don't move
-    }
+  // Decrement fire cooldown
+  const fcd = enemyFireCooldowns.get(entity.id) ?? 0;
+  if (fcd > 0) enemyFireCooldowns.set(entity.id, fcd - 1);
+
+  // Type-specific behaviors
+  switch (entity.type) {
+    case EntityType.HeatSeeker:
+      trackTarget(world, entity);
+      break;
+
+    case EntityType.UFO:
+      trackTarget(world, entity);
+      enemyFireAtTarget(world, entity, 25, 8); // fire every 25 ticks, bullet speed 8
+      break;
+
+    case EntityType.Gunship:
+      trackTarget(world, entity);
+      enemyFireAtTarget(world, entity, 12, 10); // fast fire rate
+      break;
+
+    case EntityType.Turret:
+      orbitPortal(world, entity);
+      enemyFireAtTarget(world, entity, 18, 9);
+      break;
+
+    case EntityType.Scarab:
+      orbitPortal(world, entity);
+      enemyFireAtTarget(world, entity, 20, 8);
+      break;
+
+    case EntityType.Artillery:
+      wander(entity);
+      enemyFireAtTarget(world, entity, 40, 6); // slow but high damage
+      break;
+
+    case EntityType.Mine:
+      // Static — no movement, just sits there
+      break;
+
+    case EntityType.Nuke:
+      // Fly straight toward target, don't turn much
+      trackTarget(world, entity);
+      break;
+
+    case EntityType.Inflater:
+      trackTarget(world, entity);
+      // Size grows based on damage taken (starts at 12, max 40)
+      if (entity.health && entity.collision) {
+        const def = ENEMY_DEFS[EntityType.Inflater]!;
+        const damageTaken = def.hp - entity.health.current;
+        const growthFactor = 1 + (damageTaken / def.hp) * 3; // up to 4x size
+        const baseSize = def.size;
+        const newSize = Math.min(baseSize * growthFactor, 40);
+        entity.collision.shape = { type: 'rect', width: newSize * 2, height: newSize * 2 };
+        entity.collision.damage = def.damage + damageTaken; // more damage when bigger
+      }
+      break;
+
+    case EntityType.MineLayer:
+      wander(entity);
+      // Drop a mine every 60 ticks
+      if (world.tick % 60 === 0) {
+        createEnemyEntity(
+          world, EntityType.Mine,
+          entity.ownerId, entity.ownerId,
+          entity.position.x, entity.position.y, 0,
+        );
+      }
+      break;
+
+    case EntityType.WallCrawler:
+      wallCrawl(entity);
+      break;
+
+    case EntityType.SweepBeam:
+      orbitPortal(world, entity);
+      // Damage ships in a line from portal to this entity
+      sweepBeamDamage(world, entity);
+      break;
+
+    case EntityType.EMP:
+      trackTarget(world, entity);
+      // EMP effect applied on collision in resolveCollisions
+      break;
+
+    case EntityType.GhostPud:
+      trackTarget(world, entity);
+      // Phase through walls (no bounce)
+      if (entity.physics) entity.physics.bounded = false;
+      // Wrap position
+      if (entity.position.x < 0) entity.position.x += ARENA_WIDTH;
+      if (entity.position.x > ARENA_WIDTH) entity.position.x -= ARENA_WIDTH;
+      if (entity.position.y < 0) entity.position.y += ARENA_HEIGHT;
+      if (entity.position.y > ARENA_HEIGHT) entity.position.y -= ARENA_HEIGHT;
+      break;
+
+    default:
+      // Fallback: use AI behavior field
+      if (entity.ai) {
+        switch (entity.ai.type) {
+          case 'track': trackTarget(world, entity); break;
+          case 'orbit': orbitPortal(world, entity); break;
+          case 'wander': wander(entity); break;
+        }
+      }
+      break;
   }
 
   // Apply physics
@@ -710,7 +832,154 @@ function stepEnemy(world: WorldState, entity: Entity): void {
     stepEntityPhysics(entity, true);
   } else {
     applyMovement(entity);
-    handleBounce(entity);
+    if (entity.type !== EntityType.GhostPud) handleBounce(entity);
+  }
+}
+
+/** Enemy fires a bullet at its target player */
+function enemyFireAtTarget(world: WorldState, entity: Entity, fireRate: number, bulletSpeed: number): void {
+  const cd = enemyFireCooldowns.get(entity.id) ?? 0;
+  if (cd > 0) return;
+
+  // Find target ship
+  let targetShip: Entity | undefined;
+  for (const e of world.entities.values()) {
+    if (e.type === EntityType.Ship && e.ownerId === entity.ownerId && !e.dead) {
+      targetShip = e;
+      break;
+    }
+  }
+  if (!targetShip) return;
+
+  const dx = targetShip.position.x - entity.position.x;
+  const dy = targetShip.position.y - entity.position.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist > 350) return; // range limit
+
+  const angle = Math.atan2(dy, dx);
+  const bvx = Math.cos(angle) * bulletSpeed;
+  const bvy = Math.sin(angle) * bulletSpeed;
+
+  const damage = ENEMY_DEFS[entity.type]?.damage ?? 8;
+  const bullet = createBulletEntity(world, entity.ownerId, entity.position.x, entity.position.y, bvx, bvy, Math.max(damage / 2, 4), 3);
+  bullet.lifespan = { remaining: 60 }; // shorter lifespan for enemy bullets
+  enemyFireCooldowns.set(entity.id, fireRate);
+}
+
+/** Nuke: massive AOE explosion */
+function nukeExplode(world: WorldState, entity: Entity): void {
+  const NUKE_RADIUS = 150;
+  // Damage all ships in radius
+  for (const e of world.entities.values()) {
+    if (e.dead) continue;
+    if (e.type === EntityType.Ship) {
+      const dx = e.position.x - entity.position.x;
+      const dy = e.position.y - entity.position.y;
+      if (dx * dx + dy * dy < NUKE_RADIUS * NUKE_RADIUS) {
+        if (e.shield && e.shield.ticksLeft > 0) continue;
+        if (e.health) {
+          e.health.current -= 80;
+          if (e.health.current <= 0) {
+            e.health.current = 0;
+            e.dead = true;
+            createExplosionEntity(world, e.ownerId, e.position.x, e.position.y);
+          }
+        }
+      }
+    }
+    // Also destroy nearby enemies
+    if (isEnemyType(e.type) && e.id !== entity.id) {
+      const dx = e.position.x - entity.position.x;
+      const dy = e.position.y - entity.position.y;
+      if (dx * dx + dy * dy < NUKE_RADIUS * NUKE_RADIUS) {
+        e.dead = true;
+      }
+    }
+  }
+  // Create multiple explosion visuals
+  for (let i = 0; i < 5; i++) {
+    const ox = (Math.random() - 0.5) * NUKE_RADIUS;
+    const oy = (Math.random() - 0.5) * NUKE_RADIUS;
+    createExplosionEntity(world, entity.ownerId, entity.position.x + ox, entity.position.y + oy);
+  }
+}
+
+/** WallCrawler: follow arena walls */
+function wallCrawl(entity: Entity): void {
+  const margin = 30;
+  const x = entity.position.x;
+  const y = entity.position.y;
+
+  // Determine which wall we're near and set angle to follow it
+  if (x < margin) {
+    entity.rotation.angle = 270; // go down along left wall
+  } else if (x > ARENA_WIDTH - margin) {
+    entity.rotation.angle = 90; // go up along right wall
+  } else if (y < margin) {
+    entity.rotation.angle = 0; // go right along top wall
+  } else if (y > ARENA_HEIGHT - margin) {
+    entity.rotation.angle = 180; // go left along bottom wall
+  } else {
+    // Not near a wall, move toward nearest wall
+    const distLeft = x;
+    const distRight = ARENA_WIDTH - x;
+    const distTop = y;
+    const distBottom = ARENA_HEIGHT - y;
+    const minDist = Math.min(distLeft, distRight, distTop, distBottom);
+    if (minDist === distLeft) entity.rotation.angle = 180;
+    else if (minDist === distRight) entity.rotation.angle = 0;
+    else if (minDist === distTop) entity.rotation.angle = 270;
+    else entity.rotation.angle = 90;
+  }
+}
+
+/** SweepBeam: damage ships along the line from portal to entity */
+function sweepBeamDamage(world: WorldState, entity: Entity): void {
+  // Only damage every 10 ticks
+  if (world.tick % 10 !== 0) return;
+
+  // Find portal
+  let portal: Entity | undefined;
+  for (const e of world.entities.values()) {
+    if (e.type === EntityType.Portal && e.ownerId === entity.ownerId && !e.dead) {
+      portal = e;
+      break;
+    }
+  }
+  if (!portal) return;
+
+  // Check ships near the line from portal to sweep entity
+  const px = portal.position.x;
+  const py = portal.position.y;
+  const ex = entity.position.x;
+  const ey = entity.position.y;
+  const lineDx = ex - px;
+  const lineDy = ey - py;
+  const lineLen = Math.sqrt(lineDx * lineDx + lineDy * lineDy);
+  if (lineLen < 1) return;
+
+  for (const e of world.entities.values()) {
+    if (e.dead || e.type !== EntityType.Ship) continue;
+    if (e.shield && e.shield.ticksLeft > 0) continue;
+
+    // Point-to-line distance
+    const sx = e.position.x - px;
+    const sy = e.position.y - py;
+    const t = Math.max(0, Math.min(1, (sx * lineDx + sy * lineDy) / (lineLen * lineLen)));
+    const closestX = px + t * lineDx;
+    const closestY = py + t * lineDy;
+    const dist = Math.sqrt((e.position.x - closestX) ** 2 + (e.position.y - closestY) ** 2);
+
+    if (dist < 20) { // beam width
+      if (e.health) {
+        e.health.current -= 3;
+        if (e.health.current <= 0) {
+          e.health.current = 0;
+          e.dead = true;
+          createExplosionEntity(world, e.ownerId, e.position.x, e.position.y);
+        }
+      }
+    }
   }
 }
 
@@ -884,7 +1153,27 @@ function resolveCollisions(world: WorldState): void {
       const dx = enemy.position.x - ship.position.x;
       const dy = enemy.position.y - ship.position.y;
       if (dx * dx + dy * dy < hitRadius * hitRadius) {
-        if (ship.shield && ship.shield.ticksLeft > 0) continue;
+        if (ship.shield && ship.shield.ticksLeft > 0) {
+          enemy.dead = true;
+          createExplosionEntity(world, enemy.ownerId, enemy.position.x, enemy.position.y);
+          continue;
+        }
+
+        // EMP: scramble controls instead of damage
+        if (enemy.type === EntityType.EMP) {
+          ship.emp = { ticksLeft: 150, scrambleType: Math.floor(Math.random() * 3) };
+          enemy.dead = true;
+          createExplosionEntity(world, enemy.ownerId, enemy.position.x, enemy.position.y);
+          continue;
+        }
+
+        // Nuke: AOE explosion on contact
+        if (enemy.type === EntityType.Nuke) {
+          nukeExplode(world, enemy);
+          enemy.dead = true;
+          continue;
+        }
+
         const damage = def?.damage ?? 10;
         if (ship.health) {
           ship.health.current -= damage;

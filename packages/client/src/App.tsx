@@ -470,7 +470,7 @@ export function App() {
 
           } else if (e.type !== EntityType.Portal && e.type !== EntityType.Explosion
             && e.type !== EntityType.Ship && e.type !== EntityType.Bullet && e.type !== EntityType.Powerup) {
-            // ---- Generic enemy rendering ----
+            // ---- Enemy rendering (type-specific) ----
             let gfx = entityGfx.get(e.id);
             if (!gfx) {
               gfx = new Graphics();
@@ -479,19 +479,155 @@ export function App() {
             }
 
             gfx.clear();
-            // Draw as a colored circle/triangle based on type
-            const enemyColor = 0xff4444;
-            const sz = 6;
-            // Triangle pointing in movement direction
-            gfx.poly([sz, 0, -sz, -sz * 0.7, -sz, sz * 0.7], true);
-            gfx.fill({ color: enemyColor, alpha: 0.4 });
-            gfx.stroke({ color: enemyColor, width: 1.5 });
+            const t = e.type as string;
 
-            // Health indicator (small dot that fades)
-            if (e.health != null && e.maxHealth != null && e.maxHealth > 0) {
+            if (t === 'heatseeker') {
+              // Small pointed triangle — fast missile
+              gfx.poly([7, 0, -4, -3, -4, 3], true);
+              gfx.fill({ color: 0xff6600, alpha: 0.7 });
+              gfx.stroke({ color: 0xff8800, width: 1 });
+              // Exhaust trail
+              gfx.moveTo(-4, 0);
+              gfx.lineTo(-4 - 2 - Math.random() * 4, 0);
+              gfx.stroke({ color: 0xff4400, width: 1.5, alpha: 0.5 });
+            } else if (t === 'ufo') {
+              // Classic saucer shape
+              gfx.ellipse(0, 0, 10, 5);
+              gfx.fill({ color: 0x0088ff, alpha: 0.3 });
+              gfx.stroke({ color: 0x44aaff, width: 1.5 });
+              gfx.circle(0, -2, 4);
+              gfx.fill({ color: 0x44ccff, alpha: 0.4 });
+              gfx.stroke({ color: 0x66ddff, width: 1 });
+            } else if (t === 'mine') {
+              // Spiky circle
+              const spikes = 6;
+              const inner = 4, outer = 7;
+              for (let i = 0; i < spikes; i++) {
+                const a1 = (i / spikes) * Math.PI * 2;
+                const a2 = ((i + 0.5) / spikes) * Math.PI * 2;
+                gfx.lineTo(Math.cos(a1) * outer, Math.sin(a1) * outer);
+                gfx.lineTo(Math.cos(a2) * inner, Math.sin(a2) * inner);
+              }
+              gfx.closePath();
+              gfx.fill({ color: 0xaa4400, alpha: 0.5 });
+              gfx.stroke({ color: 0xff6600, width: 1.5 });
+              // Pulsing center
+              const mp = 2 + Math.sin(frameTick * 0.15) * 1;
+              gfx.circle(0, 0, mp);
+              gfx.fill({ color: 0xff0000, alpha: 0.8 });
+            } else if (t === 'inflater') {
+              // Growing blob — size from health ratio
+              const hpRatio = (e.maxHealth && e.health != null) ? 1 - (e.health / e.maxHealth) : 0;
+              const blobSize = 8 + hpRatio * 20;
+              const wobble = Math.sin(frameTick * 0.1 + e.id) * 2;
+              gfx.ellipse(0, 0, blobSize + wobble, blobSize - wobble);
+              gfx.fill({ color: 0xffaa44, alpha: 0.3 + hpRatio * 0.3 });
+              gfx.stroke({ color: 0xffcc66, width: 1.5 });
+            } else if (t === 'gunship') {
+              // Boxy ship shape
+              gfx.poly([12, 0, -8, -7, -6, -3, -6, 3, -8, 7], true);
+              gfx.fill({ color: 0x666666, alpha: 0.5 });
+              gfx.stroke({ color: 0x999999, width: 1.5 });
+              // Gun barrels
+              gfx.rect(6, -5, 6, 2);
+              gfx.rect(6, 3, 6, 2);
+              gfx.fill({ color: 0x888888, alpha: 0.6 });
+            } else if (t === 'turret') {
+              // Rotating turret base + barrel
+              gfx.circle(0, 0, 8);
+              gfx.fill({ color: 0x555555, alpha: 0.4 });
+              gfx.stroke({ color: 0x888888, width: 1.5 });
+              gfx.rect(0, -2, 12, 4);
+              gfx.fill({ color: 0x777777, alpha: 0.6 });
+            } else if (t === 'scarab') {
+              // Beetle shape — oval with legs
+              gfx.ellipse(0, 0, 8, 6);
+              gfx.fill({ color: 0x228822, alpha: 0.4 });
+              gfx.stroke({ color: 0x44aa44, width: 1.5 });
+              // Antennae
+              gfx.moveTo(6, -3); gfx.lineTo(10, -6);
+              gfx.moveTo(6, 3); gfx.lineTo(10, 6);
+              gfx.stroke({ color: 0x44aa44, width: 1 });
+            } else if (t === 'nuke') {
+              // Large pulsing warhead
+              const nPulse = 1 + Math.sin(frameTick * 0.2) * 0.3;
+              gfx.poly([14 * nPulse, 0, -8, -8 * nPulse, -6, 0, -8, 8 * nPulse], true);
+              gfx.fill({ color: 0xff0000, alpha: 0.5 });
+              gfx.stroke({ color: 0xff4444, width: 2 });
+              // Warning symbol
+              gfx.circle(0, 0, 3);
+              gfx.fill({ color: 0xffff00, alpha: 0.8 });
+            } else if (t === 'minelayer') {
+              // Ship that drops mines — wider body
+              gfx.poly([8, 0, -6, -6, -8, -4, -8, 4, -6, 6], true);
+              gfx.fill({ color: 0x884400, alpha: 0.4 });
+              gfx.stroke({ color: 0xaa6600, width: 1.5 });
+              // Mine bay
+              gfx.circle(-4, 0, 3);
+              gfx.stroke({ color: 0xff6600, width: 1, alpha: 0.5 });
+            } else if (t === 'wallcrawler') {
+              // Centipede-like segments
+              for (let seg = 0; seg < 3; seg++) {
+                gfx.circle(-seg * 5, 0, 4);
+                gfx.fill({ color: 0x886688, alpha: 0.4 });
+                gfx.stroke({ color: 0xaa88aa, width: 1 });
+              }
+            } else if (t === 'sweepbeam') {
+              // Glowing orb — beam endpoint
+              const glow = 8 + Math.sin(frameTick * 0.08) * 3;
+              gfx.circle(0, 0, glow);
+              gfx.fill({ color: 0x44ffaa, alpha: 0.15 });
+              gfx.circle(0, 0, 4);
+              gfx.fill({ color: 0x44ffaa, alpha: 0.6 });
+              gfx.stroke({ color: 0x88ffcc, width: 1 });
+            } else if (t === 'emp') {
+              // Electric crackling sphere
+              gfx.circle(0, 0, 7);
+              gfx.fill({ color: 0x4488ff, alpha: 0.2 });
+              gfx.stroke({ color: 0x66aaff, width: 1.5 });
+              // Lightning bolts
+              for (let b = 0; b < 3; b++) {
+                const ba = ((b + frameTick * 0.05) * Math.PI * 2) / 3;
+                const bx = Math.cos(ba) * 7;
+                const by = Math.sin(ba) * 7;
+                gfx.moveTo(0, 0);
+                gfx.lineTo(bx * 0.5 + (Math.random() - 0.5) * 3, by * 0.5 + (Math.random() - 0.5) * 3);
+                gfx.lineTo(bx, by);
+                gfx.stroke({ color: 0xaaccff, width: 1, alpha: 0.7 });
+              }
+            } else if (t === 'ghostpud') {
+              // Semi-transparent blob
+              const gAlpha = 0.15 + Math.sin(frameTick * 0.06 + e.id) * 0.1;
+              gfx.circle(0, 0, 8);
+              gfx.fill({ color: 0xcccccc, alpha: gAlpha });
+              gfx.stroke({ color: 0xeeeeee, width: 1, alpha: gAlpha + 0.1 });
+              // Eyes
+              gfx.circle(-3, -2, 1.5);
+              gfx.circle(3, -2, 1.5);
+              gfx.fill({ color: 0xffffff, alpha: gAlpha + 0.2 });
+            } else if (t === 'artillery') {
+              // Heavy cannon platform
+              gfx.rect(-8, -6, 16, 12);
+              gfx.fill({ color: 0xaa8844, alpha: 0.4 });
+              gfx.stroke({ color: 0xccaa66, width: 1.5 });
+              // Barrel
+              gfx.rect(4, -2, 10, 4);
+              gfx.fill({ color: 0x887733, alpha: 0.5 });
+            } else {
+              // Fallback triangle
+              gfx.poly([6, 0, -6, -4, -6, 4], true);
+              gfx.fill({ color: 0xff4444, alpha: 0.4 });
+              gfx.stroke({ color: 0xff4444, width: 1.5 });
+            }
+
+            // Health indicator for enemies with health bars
+            if (e.health != null && e.maxHealth != null && e.maxHealth > 0 && t !== 'heatseeker' && t !== 'mine') {
               const pct = e.health / e.maxHealth;
-              gfx.circle(0, -sz - 4, 2);
-              gfx.fill({ color: pct > 0.5 ? 0x00ff00 : 0xff0000 });
+              const barW = 16;
+              gfx.rect(-barW / 2, -14, barW, 2);
+              gfx.fill({ color: 0x333333 });
+              gfx.rect(-barW / 2, -14, barW * pct, 2);
+              gfx.fill({ color: pct > 0.5 ? 0x00aa00 : 0xaa0000 });
             }
 
             gfx.x = e.x + camX;
