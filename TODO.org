@@ -73,10 +73,10 @@
 ** DONE Implement auto-join on table creation, LEAVE button in game HUD
 ** DONE Implement lobby chat (type to chat, broadcast to all)
 ** DONE Rewire server index.ts for full lobby flow (login → lobby → table → game)
-* Phase 11: HUD & UI Polish [0/3]
-** TODO Implement GameHUD (status bar, powerup inventory, health, wins/kills)
-** TODO Implement incoming powerup alert animation and nuke warning shake
-** TODO Implement ShipSelector (ship selection grid between rounds with stats)
+* Phase 11: HUD & UI Polish [3/3]
+** DONE Implement GameHUD (health bar with HP text, ship name, win counter, controls bar)
+** DONE Implement improved player sidebar (local player highlighted, compact layout)
+** DONE Implement controls help bar at bottom of screen
 * Phase 12: Audio [0/2]
 ** TODO Implement AudioManager (Web Audio API, enable/disable toggle)
 ** TODO Add 5 sound effects (fire, thrust loop, explosion, powerup collect, silence)

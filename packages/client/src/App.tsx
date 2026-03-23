@@ -112,6 +112,7 @@ export function App() {
   };
 
   // ---- Game canvas (only when in game) ----
+  const gameKey = currentTableId; // remount canvas when table changes
   useEffect(() => {
     if (screen !== 'game') return;
     const container = containerRef.current;
@@ -545,7 +546,8 @@ export function App() {
       destroyed = true;
       cleanupFn?.();
     };
-  }, [screen]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screen, gameKey]);
 
   // ---- Login Screen ----
   if (screen === 'login') {
@@ -712,6 +714,9 @@ export function App() {
   }
 
   // ---- Game Screen ----
+  const localPlayer = sidebarPlayers.find((p) => p.playerId === playerIdRef.current);
+  const localHpPct = localPlayer ? (localPlayer.health ?? 0) / (localPlayer.maxHealth ?? 1) : 1;
+
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
@@ -724,52 +729,85 @@ export function App() {
           left: 10,
           color: '#00ffaa',
           fontFamily: "'Courier New', monospace",
-          fontSize: '14px',
+          fontSize: '13px',
           pointerEvents: 'none',
           userSelect: 'none',
         }}
       >
-        <div style={{ fontSize: '20px', fontWeight: 'bold', letterSpacing: '0.2em', display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ fontSize: '18px', fontWeight: 'bold', letterSpacing: '0.2em', display: 'flex', alignItems: 'center', gap: 10 }}>
           RIFTWARP
           <button
             onClick={() => { wsSend({ type: 'leaveTable' }); }}
             style={{
-              background: 'transparent', border: '1px solid #666', color: '#666',
-              padding: '2px 8px', fontSize: '10px', fontFamily: 'inherit',
+              background: 'transparent', border: '1px solid #555', color: '#555',
+              padding: '2px 8px', fontSize: '9px', fontFamily: 'inherit',
               cursor: 'pointer', pointerEvents: 'auto',
             }}
           >
             LEAVE
           </button>
         </div>
-        <div style={{ color: '#666', marginTop: 4 }}>{status}</div>
-        <div style={{ color: '#888', marginTop: 4 }}>
-          Ship: <span style={{ color: '#00ffaa' }}>{shipName}</span>
+
+        {/* Ship + Health */}
+        <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ color: '#888' }}>Ship:</span>
+          <span style={{ color: '#00ffaa', fontWeight: 'bold' }}>{shipName}</span>
+          {localPlayer && (
+            <span style={{ color: '#666', fontSize: 11 }}>
+              W:{localPlayer.wins}
+            </span>
+          )}
         </div>
+
+        {/* Local player health bar */}
+        {localPlayer && localPlayer.alive && (
+          <div style={{ marginTop: 4, width: 140 }}>
+            <div style={{ height: 6, background: '#222', position: 'relative', border: '1px solid #333' }}>
+              <div style={{
+                height: '100%',
+                width: `${localHpPct * 100}%`,
+                background: localHpPct > 0.5 ? '#00ff00' : localHpPct > 0.25 ? '#ffff00' : '#ff0000',
+                transition: 'width 0.1s',
+              }} />
+            </div>
+            <div style={{ fontSize: 10, color: '#666', marginTop: 1 }}>
+              {localPlayer.health ?? 0}/{localPlayer.maxHealth ?? 0} HP
+            </div>
+          </div>
+        )}
+
         {/* Powerup inventory */}
         {inventory.length > 0 && (
-          <div style={{ marginTop: 6, display: 'flex', gap: 4 }}>
-            {inventory.map((pType, i) => {
-              const pDef = POWERUP_DEFINITIONS[pType];
-              const colorHex = '#' + pDef.color.toString(16).padStart(6, '0');
-              return (
-                <div
-                  key={i}
-                  style={{
-                    width: 24, height: 24,
-                    border: `1px solid ${colorHex}`,
-                    background: `${colorHex}33`,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 8, color: colorHex,
-                  }}
-                >
-                  {pDef.name.slice(0, 3)}
-                </div>
-              );
-            })}
-            <div style={{ color: '#555', fontSize: 10, alignSelf: 'center', marginLeft: 4 }}>
-              Shift: fire
+          <div style={{ marginTop: 8 }}>
+            <div style={{ color: '#555', fontSize: 10, marginBottom: 3 }}>INVENTORY (Shift to fire)</div>
+            <div style={{ display: 'flex', gap: 3 }}>
+              {inventory.map((pType, i) => {
+                const pDef = POWERUP_DEFINITIONS[pType];
+                const colorHex = '#' + pDef.color.toString(16).padStart(6, '0');
+                return (
+                  <div
+                    key={i}
+                    title={pDef.name}
+                    style={{
+                      width: 26, height: 26,
+                      border: `1px solid ${colorHex}`,
+                      background: `${colorHex}22`,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 8, color: colorHex, fontWeight: 'bold',
+                    }}
+                  >
+                    {pDef.name.slice(0, 3).toUpperCase()}
+                  </div>
+                );
+              })}
             </div>
+          </div>
+        )}
+
+        {/* Status message */}
+        {status && status !== 'logged in' && (
+          <div style={{ color: '#ffaa00', marginTop: 8, fontSize: 12, textShadow: '0 0 6px rgba(255,170,0,0.3)' }}>
+            {status}
           </div>
         )}
       </div>
@@ -782,57 +820,47 @@ export function App() {
             top: 10,
             right: 10,
             fontFamily: "'Courier New', monospace",
-            fontSize: '12px',
+            fontSize: '11px',
             pointerEvents: 'none',
             userSelect: 'none',
-            minWidth: 160,
+            minWidth: 150,
           }}
         >
           {sidebarPlayers.map((p) => {
             const color = PORTAL_COLORS[p.slot % PORTAL_COLORS.length];
             const colorHex = '#' + color.toString(16).padStart(6, '0');
             const hpPct = (p.health ?? 0) / (p.maxHealth ?? 1);
+            const isLocal = p.playerId === playerIdRef.current;
             return (
               <div
                 key={p.playerId}
                 style={{
-                  marginBottom: 6,
-                  padding: '4px 8px',
-                  background: 'rgba(0,0,0,0.6)',
+                  marginBottom: 4,
+                  padding: '3px 8px',
+                  background: isLocal ? 'rgba(0,255,170,0.08)' : 'rgba(0,0,0,0.6)',
                   borderLeft: `3px solid ${colorHex}`,
-                  opacity: p.alive ? 1 : 0.4,
+                  opacity: p.alive ? 1 : 0.35,
                 }}
               >
-                <div style={{ color: colorHex, fontWeight: 'bold' }}>
-                  {p.username}
-                  <span style={{ color: '#666', fontWeight: 'normal', marginLeft: 6 }}>
-                    {SHIP_DEFINITIONS[p.shipType]?.name ?? '?'}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ color: colorHex, fontWeight: isLocal ? 'bold' : 'normal' }}>
+                    {isLocal ? `> ${p.username}` : p.username}
                   </span>
-                  {p.wins > 0 && (
-                    <span style={{ color: '#ffaa00', marginLeft: 6 }}>
-                      W:{p.wins}
-                    </span>
-                  )}
+                  <span style={{ color: '#555', fontSize: 10 }}>
+                    {SHIP_DEFINITIONS[p.shipType]?.name ?? '?'}
+                    {p.wins > 0 && <span style={{ color: '#ffaa00', marginLeft: 4 }}>W:{p.wins}</span>}
+                  </span>
                 </div>
                 {p.alive && p.maxHealth != null && (
-                  <div
-                    style={{
-                      marginTop: 2,
-                      height: 3,
-                      background: '#333',
-                      position: 'relative',
-                    }}
-                  >
-                    <div
-                      style={{
-                        height: '100%',
-                        width: `${hpPct * 100}%`,
-                        background: hpPct > 0.5 ? '#0f0' : hpPct > 0.25 ? '#ff0' : '#f00',
-                      }}
-                    />
+                  <div style={{ marginTop: 2, height: 2, background: '#222' }}>
+                    <div style={{
+                      height: '100%',
+                      width: `${hpPct * 100}%`,
+                      background: hpPct > 0.5 ? '#0a0' : hpPct > 0.25 ? '#aa0' : '#a00',
+                    }} />
                   </div>
                 )}
-                {!p.alive && <div style={{ color: '#f44', fontSize: 10 }}>DESTROYED</div>}
+                {!p.alive && <div style={{ color: '#a33', fontSize: 9, marginTop: 1 }}>DESTROYED</div>}
               </div>
             );
           })}
@@ -844,23 +872,47 @@ export function App() {
         <div
           style={{
             position: 'absolute',
-            bottom: 40,
+            bottom: 50,
             left: '50%',
             transform: 'translateX(-50%)',
             fontFamily: "'Courier New', monospace",
-            fontSize: '14px',
+            fontSize: '13px',
             textAlign: 'center',
             pointerEvents: 'none',
             userSelect: 'none',
           }}
         >
           {events.map((text, i) => (
-            <div key={i} style={{ color: '#ffaa00', marginBottom: 4, textShadow: '0 0 8px rgba(255,170,0,0.5)' }}>
+            <div key={i} style={{ color: '#ffaa00', marginBottom: 3, textShadow: '0 0 8px rgba(255,170,0,0.4)' }}>
               {text}
             </div>
           ))}
         </div>
       )}
+
+      {/* Controls bar (bottom) */}
+      <div
+        style={{
+          position: 'absolute',
+          bottom: 8,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          fontFamily: "'Courier New', monospace",
+          fontSize: '10px',
+          color: '#444',
+          pointerEvents: 'none',
+          userSelect: 'none',
+          display: 'flex',
+          gap: 12,
+        }}
+      >
+        <span>Arrows: steer</span>
+        <span>Up: thrust</span>
+        <span>Space: fire</span>
+        <span>Shift: powerup</span>
+        <span>E: special</span>
+        <span>1-8: ship</span>
+      </div>
     </div>
   );
 }
