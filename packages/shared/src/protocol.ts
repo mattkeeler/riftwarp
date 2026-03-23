@@ -64,7 +64,7 @@ export type ServerMessage =
   | { type: 'tableUpdate'; table: TableInfo }
   | { type: 'roomStateChanged'; state: RoomState; countdown?: number }
   | { type: 'gameStart'; players: GamePlayerInfo[] }
-  | { type: 'snapshot'; tick: number; entities: SnapshotEntity[] }
+  | { type: 'snapshot'; tick: number; entities: SnapshotEntity[]; players?: SnapshotPlayerInfo[] }
   | { type: 'inputAck'; seq: number }
   | { type: 'playerDied'; playerId: string; killerId: string }
   | { type: 'gameOver'; winnerId?: string; winnerTeam?: TeamId }
@@ -91,6 +91,7 @@ export interface SnapshotEntity {
   shieldActive?: boolean;
   empActive?: boolean;
   powerupType?: PowerupType;
+  lifespan?: number;
   dead?: boolean;
 }
 
@@ -125,4 +126,15 @@ export interface GamePlayerInfo {
   slot: number;
   team: TeamId;
   shipType: ShipType;
+}
+
+export interface SnapshotPlayerInfo {
+  playerId: string;
+  username: string;
+  slot: number;
+  shipType: ShipType;
+  alive: boolean;
+  wins: number;
+  health?: number;
+  maxHealth?: number;
 }

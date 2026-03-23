@@ -5,3 +5,4 @@ export * from './physics.js';
 export * from './simulation.js';
 export * from './shipData.js';
 export * from './shipGeometry.js';
+export * from './powerupData.js';

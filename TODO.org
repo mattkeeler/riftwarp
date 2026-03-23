@@ -26,23 +26,23 @@
 ** DONE Implement ArenaRenderer (boundary, grid lines)
 ** DONE Implement Portal entity (orbit center at distance=270, ARC_SPEED=0.5 deg/tick, animated rings)
 ** DONE Implement PointerRenderer (off-screen directional arrows to enemy wormholes)
-* Phase 5: Combat System [0/5]
-** TODO Implement collision detection (Rect-Rect, Rect-Poly, Poly-Poly) in shared
-** TODO Port gun upgrade levels from g_shotData (4 levels)
-** TODO Implement Bullet entity (spawn at nose, inherit velocity, lifespan, bounce)
-** TODO Implement CollisionSystem and DamageSystem (badGuys vs goodGuys)
-** TODO Implement Explosion, Shrapnel, and Particle effects
-* Phase 6: Multiplayer Game Flow [0/4]
-** TODO Implement GameRoom lifecycle (IDLE → COUNTDOWN → PLAYING → GAMEOVER)
-** TODO Implement GameSession (track alive players, detect game-over)
-** TODO Implement full world snapshot broadcast (all entities each tick)
-** TODO Implement PlayerSidebar component (name, health, ship, powerups, wins)
-* Phase 7: Powerup System [0/5]
-** TODO Define all 20 powerup types in shared/src/powerupData.ts (stats, spawn ratios, names)
-** TODO Implement Powerup entity (34x34, bounce, lifespan=1200, invulnerable first 20 ticks)
-** TODO Implement PowerupSpawnSystem (spawn rate increases over time, spawn at random portal)
-** TODO Implement PowerupCollectionSystem (self-use types 0-5 apply immediately, sendable 6-19 to inventory max 5)
-** TODO Implement PowerupFireSystem (secondary fire sends powerup as projectile at wormhole)
+* Phase 5: Combat System [5/5]
+** DONE Implement collision detection (distance-based ship-bullet) in shared simulation
+** DONE Port gun upgrade levels from g_shotData (4 levels with damage, size, numShots, maxBullets, fireDelay)
+** DONE Implement Bullet entity (spawn at nose, inherit velocity + bullet speed, lifespan=100, wall bounce)
+** DONE Implement CollisionSystem and DamageSystem (bullets hit enemy ships, damage, death)
+** DONE Implement Explosion effects (expanding rings on ship death)
+* Phase 6: Multiplayer Game Flow [4/4]
+** DONE Implement GameRoom lifecycle (IDLE → COUNTDOWN → PLAYING → GAMEOVER with auto-restart)
+** DONE Implement game session (track alive players, detect game-over, win counting)
+** DONE Implement full world snapshot broadcast with player info (health, ship, wins, alive)
+** DONE Implement PlayerSidebar component (name, ship type, health bar, wins, destroyed state)
+* Phase 7: Powerup System [5/5]
+** DONE Define all 20 powerup types in shared/src/powerupData.ts (stats, spawn ratios, names, colors)
+** DONE Implement Powerup entity (bounce, lifespan=1200, invulnerable first 20 ticks)
+** DONE Implement PowerupSpawnSystem (spawn at random portal after 40s, rate increases over time)
+** DONE Implement PowerupCollectionSystem (self-use 0-5 apply immediately, sendable 6-19 to inventory max 5)
+** DONE Implement PowerupFireSystem (Shift key fires powerup as orange projectile)
 * Phase 8: Wormhole Enemy Types [0/15]
 ** TODO Implement HeatSeeker (12 per powerup, track player, rotate=16, thrust=7)
 ** TODO Implement Turret (1 per powerup, orbit wormhole, fire tracking bullets)

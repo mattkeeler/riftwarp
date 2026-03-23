@@ -7,12 +7,15 @@ import {
   NUM_STARS,
   EntityType,
   ShipType,
+  PowerupType,
+  RoomState,
   CLIENT_INPUT_MS,
   getShipPolygon,
   SHIP_COLORS,
   SHIP_DEFINITIONS,
+  POWERUP_DEFINITIONS,
 } from '@riftwarp/shared';
-import type { ClientMessage, ServerMessage, SnapshotEntity } from '@riftwarp/shared';
+import type { ClientMessage, ServerMessage, SnapshotEntity, SnapshotPlayerInfo } from '@riftwarp/shared';
 
 function degToRad(deg: number): number {
   return (deg * Math.PI) / 180;
@@ -43,6 +46,9 @@ export function App() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState('initializing...');
   const [shipName, setShipName] = useState('Tank');
+  const [sidebarPlayers, setSidebarPlayers] = useState<SnapshotPlayerInfo[]>([]);
+  const [events, setEvents] = useState<string[]>([]);
+  const [inventory, setInventory] = useState<PowerupType[]>([]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -78,8 +84,11 @@ export function App() {
       // ---- State ----
       let playerId: string | null = null;
       let entities: SnapshotEntity[] = [];
+      let playerInfos: SnapshotPlayerInfo[] = [];
       let currentShipType: ShipType = ShipType.Tank;
-      let playerSlotMap = new Map<string, number>(); // ownerId -> slot index for color
+      let playerSlotMap = new Map<string, number>();
+      let gameEvents: Array<{ text: string; tick: number }> = [];
+      let roomState: RoomState = RoomState.Idle;
 
       // ---- WebSocket ----
       const wsUrl = `ws://${window.location.hostname}:${DEFAULT_PORT}`;
@@ -94,12 +103,47 @@ export function App() {
       ws.onmessage = (event) => {
         try {
           const msg: ServerMessage = JSON.parse(event.data);
-          if (msg.type === 'loginOk') playerId = msg.playerId;
+          if (msg.type === 'loginOk') { playerId = msg.playerId; }
           if (msg.type === 'gameStart') {
-            setStatus('Arrows: steer | Up: thrust | 1-8: ship');
+            setStatus('Arrows: steer | Up: thrust | Space: fire | 1-8: ship');
             playerSlotMap = new Map(msg.players.map((p) => [p.playerId, p.slot]));
           }
-          if (msg.type === 'snapshot') entities = msg.entities;
+          if (msg.type === 'snapshot') {
+            entities = msg.entities;
+            if (msg.players) {
+              playerInfos = msg.players;
+              if (msg.tick % 5 === 0) setSidebarPlayers([...msg.players]);
+            }
+            // Extract local player inventory
+            if (playerId && msg.tick % 5 === 0) {
+              const localShip = msg.entities.find(
+                (e) => e.type === EntityType.Ship && e.ownerId === playerId,
+              );
+              if (localShip?.powerups) {
+                setInventory([...localShip.powerups]);
+              } else {
+                setInventory([]);
+              }
+            }
+          }
+          if (msg.type === 'roomStateChanged') {
+            roomState = msg.state;
+            if (msg.state === RoomState.Countdown) {
+              setStatus(`Game starting in ${msg.countdown}s...`);
+            } else if (msg.state === RoomState.Playing) {
+              setStatus('FIGHT!');
+            } else if (msg.state === RoomState.Idle) {
+              setStatus('Waiting for players...');
+            }
+          }
+          if (msg.type === 'gameEvent') {
+            gameEvents.push({ text: msg.text, tick: Date.now() });
+            gameEvents = gameEvents.filter((e) => Date.now() - e.tick < 5000).slice(-5);
+            setEvents(gameEvents.map((e) => e.text));
+          }
+          if (msg.type === 'gameOver') {
+            setStatus(msg.winnerId ? 'Game Over!' : 'Draw!');
+          }
         } catch { /* ignore */ }
       };
 
@@ -271,6 +315,87 @@ export function App() {
             gfx.x = e.x + camX;
             gfx.y = e.y + camY;
             gfx.rotation = degToRad(e.angle);
+
+          } else if (e.type === EntityType.Bullet) {
+            // ---- Bullet rendering ----
+            let gfx = entityGfx.get(e.id);
+            if (!gfx) {
+              gfx = new Graphics();
+              app.stage.addChildAt(gfx, app.stage.children.indexOf(pointerGfx));
+              entityGfx.set(e.id, gfx);
+            }
+
+            const isLocal = e.ownerId === playerId;
+            const bulletColor = isLocal ? 0x88ffcc : 0xff8888;
+
+            gfx.clear();
+            // Bullet crosshair
+            gfx.circle(0, 0, 3);
+            gfx.fill({ color: bulletColor, alpha: 0.9 });
+            // Trail line
+            gfx.moveTo(0, 0);
+            gfx.lineTo(-e.vx * 0.5, -e.vy * 0.5);
+            gfx.stroke({ color: bulletColor, width: 1, alpha: 0.5 });
+
+            gfx.x = e.x + camX;
+            gfx.y = e.y + camY;
+
+          } else if (e.type === EntityType.Powerup) {
+            // ---- Powerup rendering ----
+            let gfx = entityGfx.get(e.id);
+            if (!gfx) {
+              gfx = new Graphics();
+              app.stage.addChildAt(gfx, app.stage.children.indexOf(pointerGfx));
+              entityGfx.set(e.id, gfx);
+            }
+
+            const pDef = e.powerupType !== undefined ? POWERUP_DEFINITIONS[e.powerupType as PowerupType] : null;
+            const pColor = pDef?.color ?? 0xffffff;
+
+            gfx.clear();
+            // Pulsing diamond shape
+            const pulse = 0.8 + Math.sin(frameTick * 0.1 + e.id) * 0.2;
+            const sz = 8 * pulse;
+            gfx.moveTo(0, -sz);
+            gfx.lineTo(sz, 0);
+            gfx.lineTo(0, sz);
+            gfx.lineTo(-sz, 0);
+            gfx.lineTo(0, -sz);
+            gfx.fill({ color: pColor, alpha: 0.4 });
+            gfx.stroke({ color: pColor, width: 2 });
+            // Inner dot
+            gfx.circle(0, 0, 2);
+            gfx.fill({ color: pColor, alpha: 0.9 });
+
+            gfx.x = e.x + camX;
+            gfx.y = e.y + camY;
+
+          } else if (e.type === EntityType.Explosion) {
+            // ---- Explosion rendering ----
+            let gfx = entityGfx.get(e.id);
+            if (!gfx) {
+              gfx = new Graphics();
+              app.stage.addChildAt(gfx, app.stage.children.indexOf(pointerGfx));
+              entityGfx.set(e.id, gfx);
+            }
+
+            gfx.clear();
+            const maxLife = 20;
+            const life = e.lifespan ?? maxLife;
+            const progress = 1 - life / maxLife; // 0 → 1
+            const radius = 5 + progress * 30;
+            const alpha = 1 - progress;
+
+            // Expanding rings
+            gfx.circle(0, 0, radius);
+            gfx.stroke({ color: 0xff4400, width: 3, alpha });
+            gfx.circle(0, 0, radius * 0.6);
+            gfx.stroke({ color: 0xffaa00, width: 2, alpha: alpha * 0.7 });
+            gfx.circle(0, 0, radius * 0.3);
+            gfx.fill({ color: 0xffffff, alpha: alpha * 0.5 });
+
+            gfx.x = e.x + camX;
+            gfx.y = e.y + camY;
           }
         }
 
@@ -341,6 +466,8 @@ export function App() {
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+
+      {/* Top-left HUD */}
       <div
         style={{
           position: 'absolute',
@@ -360,7 +487,121 @@ export function App() {
         <div style={{ color: '#888', marginTop: 4 }}>
           Ship: <span style={{ color: '#00ffaa' }}>{shipName}</span>
         </div>
+        {/* Powerup inventory */}
+        {inventory.length > 0 && (
+          <div style={{ marginTop: 6, display: 'flex', gap: 4 }}>
+            {inventory.map((pType, i) => {
+              const pDef = POWERUP_DEFINITIONS[pType];
+              const colorHex = '#' + pDef.color.toString(16).padStart(6, '0');
+              return (
+                <div
+                  key={i}
+                  style={{
+                    width: 24, height: 24,
+                    border: `1px solid ${colorHex}`,
+                    background: `${colorHex}33`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 8, color: colorHex,
+                  }}
+                >
+                  {pDef.name.slice(0, 3)}
+                </div>
+              );
+            })}
+            <div style={{ color: '#555', fontSize: 10, alignSelf: 'center', marginLeft: 4 }}>
+              Shift: fire
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Player sidebar (top-right) */}
+      {sidebarPlayers.length > 0 && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 10,
+            right: 10,
+            fontFamily: "'Courier New', monospace",
+            fontSize: '12px',
+            pointerEvents: 'none',
+            userSelect: 'none',
+            minWidth: 160,
+          }}
+        >
+          {sidebarPlayers.map((p) => {
+            const color = PORTAL_COLORS[p.slot % PORTAL_COLORS.length];
+            const colorHex = '#' + color.toString(16).padStart(6, '0');
+            const hpPct = (p.health ?? 0) / (p.maxHealth ?? 1);
+            return (
+              <div
+                key={p.playerId}
+                style={{
+                  marginBottom: 6,
+                  padding: '4px 8px',
+                  background: 'rgba(0,0,0,0.6)',
+                  borderLeft: `3px solid ${colorHex}`,
+                  opacity: p.alive ? 1 : 0.4,
+                }}
+              >
+                <div style={{ color: colorHex, fontWeight: 'bold' }}>
+                  {p.username}
+                  <span style={{ color: '#666', fontWeight: 'normal', marginLeft: 6 }}>
+                    {SHIP_DEFINITIONS[p.shipType]?.name ?? '?'}
+                  </span>
+                  {p.wins > 0 && (
+                    <span style={{ color: '#ffaa00', marginLeft: 6 }}>
+                      W:{p.wins}
+                    </span>
+                  )}
+                </div>
+                {p.alive && p.maxHealth != null && (
+                  <div
+                    style={{
+                      marginTop: 2,
+                      height: 3,
+                      background: '#333',
+                      position: 'relative',
+                    }}
+                  >
+                    <div
+                      style={{
+                        height: '100%',
+                        width: `${hpPct * 100}%`,
+                        background: hpPct > 0.5 ? '#0f0' : hpPct > 0.25 ? '#ff0' : '#f00',
+                      }}
+                    />
+                  </div>
+                )}
+                {!p.alive && <div style={{ color: '#f44', fontSize: 10 }}>DESTROYED</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Game events (bottom-center) */}
+      {events.length > 0 && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 40,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            fontFamily: "'Courier New', monospace",
+            fontSize: '14px',
+            textAlign: 'center',
+            pointerEvents: 'none',
+            userSelect: 'none',
+          }}
+        >
+          {events.map((text, i) => (
+            <div key={i} style={{ color: '#ffaa00', marginBottom: 4, textShadow: '0 0 8px rgba(255,170,0,0.5)' }}>
+              {text}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
