@@ -1,0 +1,20 @@
+{
+  "name": "riftwarp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "RiftWarp — a real-time multiplayer arcade survival game",
+  "scripts": {
+    "dev": "pnpm --parallel -r run dev",
+    "dev:client": "pnpm --filter @riftwarp/client run dev",
+    "dev:server": "pnpm --filter @riftwarp/server run dev",
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm --filter @riftwarp/shared run build:types && pnpm --filter '!@riftwarp/shared' -r run typecheck",
+    "build:shared": "pnpm --filter @riftwarp/shared run build:types"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}

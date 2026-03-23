@@ -1,0 +1,84 @@
+#+TITLE: RiftWarp — Project Tracker
+#+STARTUP: overview
+
+* Phase 1: Project Scaffolding [4/4]
+** DONE Set up pnpm workspace root with package.json and tsconfig.base.json
+** DONE Create packages/shared with types, constants, and protocol definitions
+** DONE Create packages/client with Vite + React + Pixi.js scaffold
+** DONE Create packages/server with Node.js + WebSocket scaffold
+* Phase 2: WebSocket + Basic Game Loop [7/7]
+** DONE Define message protocol (shared/src/protocol.ts) with discriminated unions
+** DONE Implement server Ticker (fixed 20Hz loop with drift compensation)
+** DONE Implement server ConnectionManager (track clients, buffer inputs)
+** DONE Implement shared simulation tick function (shared/src/simulation.ts)
+** DONE Implement client WebSocketClient (connect, send/receive, snapshot buffer)
+** DONE Implement client InputManager (keyboard state, 20Hz send with sequence numbers)
+** DONE Implement client rendering with Pixi.js (camera follow, arena grid, ship rendering)
+* Phase 3: Ship Movement & Physics [0/5]
+** TODO Implement core physics functions in shared (thrust, friction, movement, bounce, rotate)
+** TODO Port all 8 ship stat arrays from g_fighterData to shared/src/shipData.ts
+** TODO Port ship polygon vertex data from g_shipPoints to shared/src/shipGeometry.ts
+** TODO Implement Ship entity with position, velocity, angle, health, shipType
+** TODO Implement ShipRenderer (draw polygon via Pixi.Graphics + health bar + shield)
+* Phase 4: Arena, Viewport, Stars, Wormholes [0/5]
+** TODO Implement ViewportManager (camera follows local player)
+** TODO Implement StarField (70 parallax stars, two layers)
+** TODO Implement ArenaRenderer (boundary, grid lines, center box)
+** TODO Implement Portal entity (orbit center at distance=270, ARC_SPEED=0.5 deg/tick)
+** TODO Implement PointerRenderer (off-screen directional arrows to enemy wormholes)
+* Phase 5: Combat System [0/5]
+** TODO Implement collision detection (Rect-Rect, Rect-Poly, Poly-Poly) in shared
+** TODO Port gun upgrade levels from g_shotData (4 levels)
+** TODO Implement Bullet entity (spawn at nose, inherit velocity, lifespan, bounce)
+** TODO Implement CollisionSystem and DamageSystem (badGuys vs goodGuys)
+** TODO Implement Explosion, Shrapnel, and Particle effects
+* Phase 6: Multiplayer Game Flow [0/4]
+** TODO Implement GameRoom lifecycle (IDLE → COUNTDOWN → PLAYING → GAMEOVER)
+** TODO Implement GameSession (track alive players, detect game-over)
+** TODO Implement full world snapshot broadcast (all entities each tick)
+** TODO Implement PlayerSidebar component (name, health, ship, powerups, wins)
+* Phase 7: Powerup System [0/5]
+** TODO Define all 20 powerup types in shared/src/powerupData.ts (stats, spawn ratios, names)
+** TODO Implement Powerup entity (34x34, bounce, lifespan=1200, invulnerable first 20 ticks)
+** TODO Implement PowerupSpawnSystem (spawn rate increases over time, spawn at random portal)
+** TODO Implement PowerupCollectionSystem (self-use types 0-5 apply immediately, sendable 6-19 to inventory max 5)
+** TODO Implement PowerupFireSystem (secondary fire sends powerup as projectile at wormhole)
+* Phase 8: Wormhole Enemy Types [0/15]
+** TODO Implement HeatSeeker (12 per powerup, track player, rotate=16, thrust=7)
+** TODO Implement Turret (1 per powerup, orbit wormhole, fire tracking bullets)
+** TODO Implement Mines (15 per powerup, expand in circle, sit still, explode on contact)
+** TODO Implement UFO (3 per powerup, track player, fire bullets)
+** TODO Implement Inflater (4 per powerup, track player, grow on hit)
+** TODO Implement MineLayer (2 per powerup, wander laying mines)
+** TODO Implement Gunship (1 per powerup, strong tracker)
+** TODO Implement Scarab (2 per powerup, orbit wormhole, fire at player)
+** TODO Implement Nuke (1 per powerup, massive explosion)
+** TODO Implement WallCrawler (1 per powerup, follow arena walls)
+** TODO Implement SweepBeam (1 per powerup, sweeping beam from wormhole)
+** TODO Implement EMP (1 per powerup, scramble controls 150 cycles)
+** TODO Implement GhostPud (1+ per powerup, scale with upgrade level)
+** TODO Implement Artillery (2 per powerup, ranged bombardment)
+** TODO Implement wormhole damage accumulation (150 dmg → drops powerup) and powerup queue (30-tick delay)
+* Phase 9: Ship Specials [0/5]
+** TODO Implement Turtle special (D key destroys visible enemies, costs 20 HP)
+** TODO Implement Flash special (D key toggles Squid/Tank forms)
+** TODO Implement Hunter special (D key fires 17 homing Piranha missiles, 3 charges, regen 1/20s)
+** TODO Implement Flagship special (D key attractor/repulser field for powerups/enemies)
+** TODO Implement tracking cannon system (auto-target with priority list, lead calculation)
+* Phase 10: Lobby System [0/6]
+** TODO Implement server UserManager and TableManager
+** TODO Implement LoginScreen (username entry, connect)
+** TODO Implement LobbyScreen (player list, table list, chat)
+** TODO Implement TableView (player slots, ship selection, team buttons, start)
+** TODO Implement CreateTableDialog (big/small, teams, ranked, password, board size)
+** TODO Implement ChatPanel (global + whisper + table chat)
+* Phase 11: HUD & UI Polish [0/3]
+** TODO Implement GameHUD (status bar, powerup inventory, health, wins/kills)
+** TODO Implement incoming powerup alert animation and nuke warning shake
+** TODO Implement ShipSelector (ship selection grid between rounds with stats)
+* Phase 12: Audio [0/2]
+** TODO Implement AudioManager (Web Audio API, enable/disable toggle)
+** TODO Add 5 sound effects (fire, thrust loop, explosion, powerup collect, silence)
+* Phase 13: AI Bots [0/2]
+** TODO Implement BotController (navigate, collect, fight, use specials, difficulty levels)
+** TODO Implement BotManager (fill empty table slots with bots)

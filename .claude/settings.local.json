@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh repo:*)",
+      "Bash(git ls-tree:*)",
+      "Bash(git config:*)",
+      "Bash(wc -l /tmp/wormhole-redux/src/client/*.java /tmp/wormhole-redux/src/server/*.java)",
+      "Bash(find /tmp/wormhole-redux -type f \\\\\\( -name \"*.html\" -o -name \"*.md\" \\\\\\) -exec wc -l {} +)",
+      "Bash(pnpm install:*)",
+      "Bash(npm --version)",
+      "Bash(npm install:*)",
+      "Bash(pnpm approve-builds:*)",
+      "Bash(pnpm config:*)",
+      "Bash(pnpm run:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(cat /Users/mkeeler/git/mine/riftwarp/node_modules/.pnpm/react-dom@*/node_modules/react-dom/client.js)",
+      "Bash(node -e \"const m = require\\(''/Users/mkeeler/git/mine/riftwarp/node_modules/.pnpm/react-dom@19.2.4_react@19.2.4/node_modules/react-dom/client.js''\\); console.log\\(Object.keys\\(m\\)\\)\")",
+      "Bash(gh api:*)"
+    ]
+  }
+}
