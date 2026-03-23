@@ -115,6 +115,12 @@ export class GameRoom {
     }
   }
 
+  requestStart(): void {
+    if (this.state === RoomState.Idle && this.players.size >= 1) {
+      this.startCountdown();
+    }
+  }
+
   updateInput(clientId: string, input: InputState, seq: number): void {
     const ps = this.players.get(clientId);
     if (!ps || !ps.alive) return; // Don't accept input from dead players
