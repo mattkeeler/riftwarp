@@ -93,6 +93,7 @@ export interface SnapshotEntity {
   powerupType?: PowerupType;
   lifespan?: number;
   dead?: boolean;
+  portalDamage?: number;
 }
 
 // ---- Info types ----

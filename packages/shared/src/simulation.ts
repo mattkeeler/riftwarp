@@ -8,6 +8,7 @@ import {
   REBOUND_COEFF,
   DEFAULT_ORBIT_DISTANCE,
   PORTAL_ARC_SPEED,
+  PORTAL_DAMAGE_THRESHOLD,
   BULLET_SPEED,
   BULLET_NOSE_OFFSET,
   BULLET_LIFESPAN,
@@ -1100,17 +1101,31 @@ function resolveCollisions(world: WorldState): void {
     }
   }
 
-  // Bullet vs Portal (powerup bullets spawn enemies)
+  // Bullet vs Portal
   for (const bullet of bullets) {
     if (bullet.dead) continue;
-    if (bullet.powerupType === undefined) continue; // Only powerup bullets
     for (const portal of portals) {
       if (portal.dead) continue;
       if (portal.ownerId === bullet.ownerId) continue; // Can't hit own portal
       const dx = bullet.position.x - portal.position.x;
       const dy = bullet.position.y - portal.position.y;
       if (dx * dx + dy * dy < 30 * 30) {
-        spawnEnemiesFromPortal(world, portal, bullet.powerupType!, bullet.ownerId);
+        if (bullet.powerupType !== undefined) {
+          // Powerup bullet: spawn enemies from portal
+          spawnEnemiesFromPortal(world, portal, bullet.powerupType!, bullet.ownerId);
+        } else {
+          // Regular bullet: accumulate damage on portal
+          if (portal.portal) {
+            const dmg = bullet.collision?.damage ?? 10;
+            portal.portal.damageAccumulated += dmg;
+            if (portal.portal.damageAccumulated >= PORTAL_DAMAGE_THRESHOLD) {
+              portal.portal.damageAccumulated -= PORTAL_DAMAGE_THRESHOLD;
+              // Drop a random powerup from this portal
+              const pType = generateRandomPowerupType(world.tick);
+              createPowerupEntity(world, portal.position.x, portal.position.y, pType);
+            }
+          }
+        }
         bullet.dead = true;
         break;
       }
@@ -1295,6 +1310,9 @@ function entityToSnapshot(e: Entity): SnapshotEntity {
   }
   if (e.lifespan) {
     snap.lifespan = e.lifespan.remaining;
+  }
+  if (e.portal) {
+    snap.portalDamage = e.portal.damageAccumulated;
   }
   return snap;
 }

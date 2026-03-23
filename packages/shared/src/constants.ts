@@ -18,6 +18,7 @@ export const CLIENT_INPUT_MS = SERVER_TICK_MS;
 // Wormhole portals
 export const DEFAULT_ORBIT_DISTANCE = 270;
 export const PORTAL_ARC_SPEED = 0.5; // degrees per tick
+export const PORTAL_DAMAGE_THRESHOLD = 150; // damage before portal drops a powerup
 
 // Stars
 export const NUM_STARS = 70;

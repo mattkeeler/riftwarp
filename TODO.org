@@ -83,3 +83,21 @@
 * Phase 13: AI Bots [2/2]
 ** DONE Implement BotController (navigate, chase players, collect powerups, fight, fire, difficulty levels)
 ** DONE Implement auto-fill with bots (3 bots on table creation, named Ziggy/Nova/Blitz/etc.)
+* Phase 14: Enemy Behavior Polish [8/8]
+** DONE Implement shooting enemies (UFO, Gunship, Turret, Scarab, Artillery fire aimed bullets)
+** DONE Implement Nuke AOE explosion (150px radius, 80 damage, destroys nearby enemies, 5 visual explosions)
+** DONE Implement EMP control scramble (reverse steering, disable thrust, or disable fire for 150 ticks)
+** DONE Implement MineLayer dropping mines every 60 ticks while wandering
+** DONE Implement Inflater growing up to 4x size when damaged, increased contact damage
+** DONE Implement WallCrawler wall-following AI
+** DONE Implement SweepBeam line damage from portal to entity
+** DONE Implement GhostPud wall phasing (wraps position, semi-transparent)
+* Phase 15: Unique Enemy Graphics [1/1]
+** DONE Implement 14 distinct enemy renderers (saucer, spiky mine, pulsing nuke, beetle, electric EMP, ghost blob, etc.)
+* Phase 16: Portal Damage Accumulation [1/1]
+** DONE Implement portal damage tracking (regular bullets accumulate damage, 150 dmg drops random powerup)
+* Backlog [0/4]
+** TODO Explore visual indicators for portal damage (flicker, color shift, particle effects)
+** TODO Implement Flagship attractor/repulser force field physics (currently toggle-only)
+** TODO Improve bot AI (aim powerups at enemy portals, use ship specials, dodge bullets)
+** TODO Implement wormhole damage accumulation powerup queue (30-tick delay between drops)
