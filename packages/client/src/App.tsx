@@ -177,6 +177,10 @@ export function App() {
             entities = msg.entities;
             if (msg.players) {
               playerInfos = msg.players;
+              // Keep slot map in sync from snapshot players
+              for (const p of msg.players) {
+                if (p.slot !== undefined) playerSlotMap.set(p.playerId, p.slot);
+              }
               if (msg.tick % 5 === 0) setSidebarPlayers([...msg.players]);
             }
             if (playerId && msg.tick % 5 === 0) {
@@ -347,11 +351,12 @@ export function App() {
 
             gfx.clear();
 
-            // Animated concentric rings
+            // Animated concentric rings — same style for all portals
             const pulse = Math.sin(frameTick * 0.05) * 0.3 + 0.7;
-            for (let ring = 3; ring >= 0; ring--) {
+            const ringCount = 3;
+            for (let ring = ringCount; ring >= 0; ring--) {
               const radius = 15 + ring * 8;
-              const alpha = (0.15 + ring * 0.05) * pulse;
+              const alpha = 0.15 + ring * 0.05 * pulse;
               gfx.circle(0, 0, radius);
               gfx.stroke({ color: baseColor, width: 2, alpha });
             }
@@ -381,7 +386,8 @@ export function App() {
 
             const isLocal = e.ownerId === playerId;
             const shipType = e.shipType ?? ShipType.Tank;
-            const color = isLocal ? (SHIP_COLORS[shipType as ShipType] ?? 0x00ffaa) : 0xff4444;
+            const slotColor = PORTAL_COLORS[(playerSlotMap.get(e.ownerId) ?? 0) % PORTAL_COLORS.length];
+            const color = isLocal ? (SHIP_COLORS[shipType as ShipType] ?? 0x00ffaa) : slotColor;
             const poly = getShipPolygon(shipType as ShipType);
             const verts = poly.length > 0 ? poly : DEFAULT_SHIP_VERTS;
 
