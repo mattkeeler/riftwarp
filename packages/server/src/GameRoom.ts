@@ -7,6 +7,7 @@ import {
   ShipType,
   RoomState,
   EntityType,
+  type Entity,
   type ServerMessage,
   type InputState,
   type SnapshotPlayerInfo,
@@ -27,7 +28,6 @@ import { BotController } from './BotController.js';
 interface PlayerState {
   shipType: ShipType;
   shipEntityId: number | null;
-  portalEntityId: number | null;
   alive: boolean;
   wins: number;
   slot: number;
@@ -37,8 +37,10 @@ interface PlayerState {
 const BOT_NAMES = ['Ziggy', 'Nova', 'Blitz', 'Havoc', 'Shade', 'Volt', 'Drift', 'Spark'];
 const BOT_SHIPS = [ShipType.Squid, ShipType.Tank, ShipType.Hunter, ShipType.Rabbit, ShipType.Flash, ShipType.Turtle];
 
+const PORTAL_SPAWN_DELAY = 30;
+
 export class GameRoom {
-  private world: WorldState = createWorldState();
+  private worlds = new Map<string, WorldState>();
   private ticker: Ticker;
   private playerInputs: PlayerInputs = new Map();
   private players = new Map<string, PlayerState>();
@@ -71,7 +73,6 @@ export class GameRoom {
     const ps: PlayerState = {
       shipType,
       shipEntityId: null,
-      portalEntityId: null,
       alive: false,
       wins: 0,
       slot,
@@ -91,11 +92,8 @@ export class GameRoom {
   }
 
   removeBot(botId: string): void {
-    this.despawnPlayer(botId);
-    this.players.delete(botId);
-    this.playerInputs.delete(botId);
+    this.removePlayer(botId);
     this.bots.delete(botId);
-    this.rebalancePortals();
   }
 
   fillWithBots(targetCount: number = 3): void {
@@ -112,7 +110,6 @@ export class GameRoom {
     const ps: PlayerState = {
       shipType,
       shipEntityId: null,
-      portalEntityId: null,
       alive: false,
       wins: 0,
       slot,
@@ -139,14 +136,17 @@ export class GameRoom {
     if (!ps) return;
     ps.shipType = shipType;
 
+    const world = this.worlds.get(clientId);
+    if (!world) return;
+
     // Respawn with new ship
     if (ps.shipEntityId !== null) {
-      const oldEntity = this.world.entities.get(ps.shipEntityId);
+      const oldEntity = world.entities.get(ps.shipEntityId);
       const pos = oldEntity ? { x: oldEntity.position.x, y: oldEntity.position.y, angle: oldEntity.rotation.angle } : null;
       this.despawnShip(clientId);
       this.spawnShip(clientId);
       if (pos && ps.shipEntityId !== null) {
-        const newEntity = this.world.entities.get(ps.shipEntityId);
+        const newEntity = world.entities.get(ps.shipEntityId);
         if (newEntity) {
           newEntity.position.x = pos.x;
           newEntity.position.y = pos.y;
@@ -157,7 +157,18 @@ export class GameRoom {
   }
 
   removePlayer(clientId: string): void {
-    this.despawnPlayer(clientId);
+    // Remove this player's portal from all other worlds
+    for (const [otherId, otherWorld] of this.worlds) {
+      if (otherId === clientId) continue;
+      for (const entity of otherWorld.entities.values()) {
+        if (entity.type === EntityType.Portal && entity.portal?.playerId === clientId) {
+          entity.dead = true;
+        }
+      }
+    }
+
+    // Delete this player's world
+    this.worlds.delete(clientId);
     this.players.delete(clientId);
     this.playerInputs.delete(clientId);
     this.rebalancePortals();
@@ -197,11 +208,10 @@ export class GameRoom {
   private startGame(): void {
     this.state = RoomState.Playing;
 
-    // Reset world and respawn all players
-    this.world = createWorldState();
+    // Reset worlds and respawn all players
+    this.worlds.clear();
     for (const [clientId, ps] of this.players) {
       ps.shipEntityId = null;
-      ps.portalEntityId = null;
       ps.alive = false;
       this.spawnPlayer(clientId);
       ps.alive = true;
@@ -238,10 +248,9 @@ export class GameRoom {
     this.connections.broadcast({ type: 'roomStateChanged', state: RoomState.Idle });
 
     // Respawn all players for next round
-    this.world = createWorldState();
+    this.worlds.clear();
     for (const [clientId, ps] of this.players) {
       ps.shipEntityId = null;
-      ps.portalEntityId = null;
       ps.alive = false;
       this.spawnPlayer(clientId);
     }
@@ -259,57 +268,72 @@ export class GameRoom {
   // ---- Spawning ----
 
   private spawnPlayer(clientId: string): void {
-    this.spawnShip(clientId);
-    this.spawnPortal(clientId);
+    const ps = this.players.get(clientId);
+    if (!ps) return;
+
+    // Create a new world for this player
+    const world = createWorldState(clientId);
+    this.worlds.set(clientId, world);
+
+    // Spawn their ship in their world
+    const spawnX = 100 + Math.random() * (ARENA_WIDTH - 200);
+    const spawnY = 100 + Math.random() * (ARENA_HEIGHT - 200);
+    const entity = createShipEntity(world, clientId, ps.shipType, spawnX, spawnY);
+    ps.shipEntityId = entity.id;
+    ps.alive = true;
+
+    // Add one portal per existing opponent into this player's world
+    for (const [otherId, otherPs] of this.players) {
+      if (otherId === clientId) continue;
+      createPortalEntity(world, otherId, otherPs.slot * 90);
+    }
+
+    // Add THIS player's portal into every OTHER player's world
+    for (const [otherId, otherWorld] of this.worlds) {
+      if (otherId === clientId) continue;
+      createPortalEntity(otherWorld, clientId, ps.slot * 90);
+    }
   }
 
   private spawnShip(clientId: string): void {
     const ps = this.players.get(clientId);
     if (!ps) return;
+    const world = this.worlds.get(clientId);
+    if (!world) return;
     const spawnX = 100 + Math.random() * (ARENA_WIDTH - 200);
     const spawnY = 100 + Math.random() * (ARENA_HEIGHT - 200);
-    const entity = createShipEntity(this.world, clientId, ps.shipType, spawnX, spawnY);
+    const entity = createShipEntity(world, clientId, ps.shipType, spawnX, spawnY);
     ps.shipEntityId = entity.id;
     ps.alive = true;
-  }
-
-  private spawnPortal(clientId: string): void {
-    const ps = this.players.get(clientId);
-    if (!ps || ps.portalEntityId !== null) return;
-    const portal = createPortalEntity(this.world, clientId, ps.slot * 90);
-    ps.portalEntityId = portal.id;
-  }
-
-  private despawnPlayer(clientId: string): void {
-    this.despawnShip(clientId);
-    this.despawnPortal(clientId);
   }
 
   private despawnShip(clientId: string): void {
     const ps = this.players.get(clientId);
     if (!ps || ps.shipEntityId === null) return;
-    const entity = this.world.entities.get(ps.shipEntityId);
+    const world = this.worlds.get(clientId);
+    if (!world) return;
+    const entity = world.entities.get(ps.shipEntityId);
     if (entity) entity.dead = true;
     ps.shipEntityId = null;
     ps.alive = false;
   }
 
-  private despawnPortal(clientId: string): void {
-    const ps = this.players.get(clientId);
-    if (!ps || ps.portalEntityId === null) return;
-    const portal = this.world.entities.get(ps.portalEntityId);
-    if (portal) portal.dead = true;
-    ps.portalEntityId = null;
-  }
-
   private rebalancePortals(): void {
-    const entries = Array.from(this.players.entries()).filter(([, ps]) => ps.portalEntityId !== null);
-    const count = entries.length;
-    if (count === 0) return;
-    for (let i = 0; i < count; i++) {
-      const portal = this.world.entities.get(entries[i][1].portalEntityId!);
-      if (portal?.portal) {
-        portal.portal.orbitDegrees = (i * 360) / count;
+    // For each world, rebalance the portals within it
+    for (const [_ownerId, world] of this.worlds) {
+      const portalEntries: Entity[] = [];
+      for (const entity of world.entities.values()) {
+        if (entity.type === EntityType.Portal && !entity.dead) {
+          portalEntries.push(entity);
+        }
+      }
+      const count = portalEntries.length;
+      if (count === 0) continue;
+      for (let i = 0; i < count; i++) {
+        const portal = portalEntries[i];
+        if (portal.portal) {
+          portal.portal.orbitDegrees = (i * 360) / count;
+        }
       }
     }
   }
@@ -330,23 +354,50 @@ export class GameRoom {
       }
     }
 
-    // Generate bot inputs
+    // 1. Bot inputs
     for (const [botId, bot] of this.bots) {
       const ps = this.players.get(botId);
       if (ps && ps.alive) {
-        this.playerInputs.set(botId, bot.generateInput(this.world));
+        const botWorld = this.worlds.get(botId);
+        if (botWorld) {
+          this.playerInputs.set(botId, bot.generateInput(botWorld));
+        }
       }
     }
 
-    // Step simulation
-    simulationTick(this.world, this.playerInputs);
+    // 2. Tick each world
+    for (const [playerId, world] of this.worlds) {
+      const singleInput: PlayerInputs = new Map();
+      const input = this.playerInputs.get(playerId);
+      if (input) singleInput.set(playerId, input);
+      simulationTick(world, singleInput);
+    }
 
-    // Check for player deaths (during gameplay)
+    // 3. Route cross-world events
+    for (const [_playerId, world] of this.worlds) {
+      for (const event of world.crossWorldEvents) {
+        if (event.type === 'spawnEnemies') {
+          const targetWorld = this.worlds.get(event.targetPlayerId);
+          if (targetWorld) {
+            targetWorld.pendingSpawns.push({
+              powerupType: event.powerupType,
+              spawnAtTick: targetWorld.tick + PORTAL_SPAWN_DELAY,
+              senderOwnerId: event.senderPlayerId,
+            });
+          }
+        }
+      }
+      world.crossWorldEvents = [];
+    }
+
+    // 4. Check for player deaths (during gameplay)
     if (this.state === RoomState.Playing) {
       for (const [clientId, ps] of this.players) {
         if (!ps.alive) continue;
         if (ps.shipEntityId === null) continue;
-        const ship = this.world.entities.get(ps.shipEntityId);
+        const world = this.worlds.get(clientId);
+        if (!world) continue;
+        const ship = world.entities.get(ps.shipEntityId);
         if (!ship || ship.dead) {
           ps.alive = false;
           ps.shipEntityId = null;
@@ -364,9 +415,30 @@ export class GameRoom {
       }
     }
 
-    // Build player info for sidebar
-    const playerInfos: SnapshotPlayerInfo[] = Array.from(this.players.entries()).map(([id, ps]) => {
-      const ship = ps.shipEntityId !== null ? this.world.entities.get(ps.shipEntityId) : undefined;
+    // 5. Per-player snapshots
+    const playerInfos = this.buildPlayerInfos();
+    for (const [clientId, ps] of this.players) {
+      if (ps.isBot) continue;
+      const client = this.connections.getClient(clientId);
+      if (!client) continue;
+      const world = this.worlds.get(clientId);
+      if (!world) continue;
+      const entities = worldToSnapshot(world);
+      this.connections.send(client, {
+        type: 'snapshot',
+        tick: world.tick,
+        entities,
+        players: playerInfos,
+      });
+    }
+  }
+
+  // ---- Helpers ----
+
+  private buildPlayerInfos(): SnapshotPlayerInfo[] {
+    return Array.from(this.players.entries()).map(([id, ps]) => {
+      const world = this.worlds.get(id);
+      const ship = (ps.shipEntityId !== null && world) ? world.entities.get(ps.shipEntityId) : undefined;
       return {
         playerId: id,
         username: this.getUsername(id),
@@ -378,18 +450,7 @@ export class GameRoom {
         maxHealth: ship?.health?.max,
       };
     });
-
-    // Broadcast snapshot
-    const snapshot: ServerMessage = {
-      type: 'snapshot',
-      tick: this.world.tick,
-      entities: worldToSnapshot(this.world),
-      players: playerInfos,
-    };
-    this.connections.broadcast(snapshot);
   }
-
-  // ---- Helpers ----
 
   private broadcastGameStart(): void {
     const players = Array.from(this.players.entries()).map(([id, ps]) => ({

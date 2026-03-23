@@ -9,7 +9,7 @@ import type { WorldState, Entity } from '@riftwarp/shared';
 
 /**
  * AI bot that generates InputState each tick based on world state.
- * Behaviors: wander, chase player, collect powerup, dodge bullets, fire.
+ * Behaviors: dodge/kill enemies, collect powerups, fire powerups at enemy portals, wander.
  */
 export class BotController {
   private wanderAngle = Math.random() * 360;
@@ -37,7 +37,7 @@ export class BotController {
     // Find targets
     const nearestEnemy = this.findNearestEnemy(world, ship);
     const nearestPowerup = this.findNearestPowerup(world, ship);
-    const nearestPlayerShip = this.findNearestPlayerShip(world, ship);
+    const nearestEnemyPortal = this.findNearestEnemyPortal(world, ship);
 
     // Decision: what to pursue
     let targetX: number;
@@ -53,11 +53,11 @@ export class BotController {
       // Collect nearby powerup
       targetX = nearestPowerup.position.x;
       targetY = nearestPowerup.position.y;
-    } else if (nearestPlayerShip) {
-      // Chase other players
-      targetX = nearestPlayerShip.position.x;
-      targetY = nearestPlayerShip.position.y;
-      shouldFire = this.dist(ship, nearestPlayerShip) < 250;
+    } else if (nearestEnemyPortal) {
+      // Approach enemy portals to fire powerups or shoot for damage drops
+      targetX = nearestEnemyPortal.position.x;
+      targetY = nearestEnemyPortal.position.y;
+      shouldFire = this.dist(ship, nearestEnemyPortal) < 250;
     } else {
       // Wander
       this.wanderTimer--;
@@ -104,8 +104,7 @@ export class BotController {
 
     // Use secondary fire (powerup) when we have inventory and near an enemy portal
     if (ship.powerupInventory && ship.powerupInventory.items.length > 0) {
-      const nearestPortal = this.findNearestEnemyPortal(world, ship);
-      if (nearestPortal && this.dist(ship, nearestPortal) < 60 && Math.abs(diff) < 30) {
+      if (nearestEnemyPortal && this.dist(ship, nearestEnemyPortal) < 60 && Math.abs(diff) < 30) {
         input.secondaryFire = true;
       }
     }
@@ -145,18 +144,6 @@ export class BotController {
     let nearestDist = Infinity;
     for (const e of world.entities.values()) {
       if (e.dead || e.type !== EntityType.Powerup) continue;
-      const d = this.dist(ship, e);
-      if (d < nearestDist) { nearestDist = d; nearest = e; }
-    }
-    return nearest;
-  }
-
-  private findNearestPlayerShip(world: WorldState, ship: Entity): Entity | undefined {
-    let nearest: Entity | undefined;
-    let nearestDist = Infinity;
-    for (const e of world.entities.values()) {
-      if (e.dead || e.type !== EntityType.Ship) continue;
-      if (e.ownerId === this.playerId) continue;
       const d = this.dist(ship, e);
       if (d < nearestDist) { nearestDist = d; nearest = e; }
     }

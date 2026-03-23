@@ -19,7 +19,15 @@
       "mcp__github__get_file_contents",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(ls /tmp/wormhole-redux/src/client/*.java)"
+      "Bash(ls /tmp/wormhole-redux/src/client/*.java)",
+      "Bash(mkdir -p /tmp/wormhole-jar)",
+      "Read(//tmp/**)",
+      "Bash(jar tf:*)",
+      "Read(//private/tmp/wormhole-jar/**)",
+      "Bash(unzip -l /Users/mkeeler/Downloads/whclient.jar)",
+      "Bash(unzip -o /Users/mkeeler/Downloads/whclient.jar -d .)",
+      "Bash(find . -name *.java)",
+      "Bash(git clone:*)"
     ]
   }
 }

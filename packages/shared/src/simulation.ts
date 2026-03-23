@@ -1,4 +1,4 @@
-import type { Entity, EntityId, PowerupInventory } from './types.js';
+import type { Entity, EntityId } from './types.js';
 import { EntityType, ShipType, PowerupType, SpecialType } from './types.js';
 import type { InputState, SnapshotEntity } from './protocol.js';
 import {
@@ -25,23 +25,49 @@ import { POWERUP_DEFINITIONS, generateRandomPowerupType } from './powerupData.js
 
 // ---- World State ----
 
+export interface CrossWorldEvent {
+  type: 'spawnEnemies';
+  targetPlayerId: string;
+  senderPlayerId: string;
+  powerupType: PowerupType;
+}
+
+export interface PendingSpawn {
+  powerupType: PowerupType;
+  spawnAtTick: number;
+  senderOwnerId: string;
+}
+
+export interface PlayerCooldownState {
+  fireCooldown: number;
+  bulletCount: number;
+  specialCooldown: number;
+  hunterCharges: number;
+  hunterRegenTick: number;
+  attractorActive: boolean;
+}
+
 export interface WorldState {
   tick: number;
   entities: Map<EntityId, Entity>;
   nextEntityId: EntityId;
+  ownerId: string;
+  cooldowns: PlayerCooldownState;
+  crossWorldEvents: CrossWorldEvent[];
+  pendingSpawns: PendingSpawn[];
 }
 
-export function createWorldState(): WorldState {
+export function createWorldState(ownerId: string): WorldState {
   return {
     tick: 0,
     entities: new Map(),
     nextEntityId: 1,
+    ownerId,
+    cooldowns: { fireCooldown: 0, bulletCount: 0, specialCooldown: 0, hunterCharges: 3, hunterRegenTick: 0, attractorActive: false },
+    crossWorldEvents: [],
+    pendingSpawns: [],
   };
 }
-
-// ---- Per-player state ----
-const playerFireCooldowns = new Map<string, number>();
-const playerBulletCounts = new Map<string, number>();
 
 // ---- Powerup spawning state ----
 const SPAWN_START_TICK = 40 * 20; // 40 seconds at 20Hz
@@ -86,8 +112,8 @@ export function createShipEntity(
     powerupInventory: { items: [] },
   };
   world.entities.set(id, entity);
-  playerFireCooldowns.set(ownerId, 0);
-  playerBulletCounts.set(ownerId, 0);
+  world.cooldowns.fireCooldown = 0;
+  world.cooldowns.bulletCount = 0;
   return entity;
 }
 
@@ -114,7 +140,6 @@ export function createPortalEntity(
       orbitDegrees: startDegrees,
       playerId: ownerId,
       damageAccumulated: 0,
-      spawnQueue: [],
     },
   };
   world.entities.set(id, entity);
@@ -207,22 +232,15 @@ export function simulationTick(world: WorldState, inputs: PlayerInputs): void {
   world.tick++;
 
   // Decrement cooldowns
-  for (const [id, cd] of playerFireCooldowns) {
-    if (cd > 0) playerFireCooldowns.set(id, cd - 1);
-  }
-  for (const [id, cd] of specialCooldowns) {
-    if (cd > 0) specialCooldowns.set(id, cd - 1);
-  }
+  if (world.cooldowns.fireCooldown > 0) world.cooldowns.fireCooldown--;
+  if (world.cooldowns.specialCooldown > 0) world.cooldowns.specialCooldown--;
   // Hunter charge regen
-  for (const [id, regenAt] of hunterRegenTick) {
-    if (world.tick >= regenAt) {
-      const charges = hunterCharges.get(id) ?? 0;
-      if (charges < 3) {
-        hunterCharges.set(id, charges + 1);
-        hunterRegenTick.set(id, world.tick + 400); // next regen in 20s
-      } else {
-        hunterRegenTick.delete(id);
-      }
+  if (world.cooldowns.hunterRegenTick > 0 && world.tick >= world.cooldowns.hunterRegenTick) {
+    if (world.cooldowns.hunterCharges < 3) {
+      world.cooldowns.hunterCharges++;
+      world.cooldowns.hunterRegenTick = world.tick + 400; // next regen in 20s
+    } else {
+      world.cooldowns.hunterRegenTick = 0;
     }
   }
 
@@ -257,6 +275,19 @@ export function simulationTick(world: WorldState, inputs: PlayerInputs): void {
   // Collisions
   resolveCollisions(world);
 
+  // Process pending enemy spawns
+  for (let i = world.pendingSpawns.length - 1; i >= 0; i--) {
+    if (world.tick >= world.pendingSpawns[i].spawnAtTick) {
+      const spawn = world.pendingSpawns.splice(i, 1)[0];
+      // Find a random portal position to spawn enemies at
+      const portals = [...world.entities.values()].filter(e => e.type === EntityType.Portal && !e.dead);
+      const portal = portals.length > 0 ? portals[Math.floor(Math.random() * portals.length)] : null;
+      if (portal) {
+        spawnEnemiesFromPortal(world, portal, spawn.powerupType, spawn.senderOwnerId);
+      }
+    }
+  }
+
   // Powerup spawning
   spawnPowerups(world);
 
@@ -265,8 +296,7 @@ export function simulationTick(world: WorldState, inputs: PlayerInputs): void {
     if (entity.dead) {
       world.entities.delete(id);
       if (entity.type === EntityType.Bullet) {
-        const count = playerBulletCounts.get(entity.ownerId) ?? 0;
-        playerBulletCounts.set(entity.ownerId, Math.max(0, count - 1));
+        world.cooldowns.bulletCount = Math.max(0, world.cooldowns.bulletCount - 1);
       }
     }
   }
@@ -296,7 +326,7 @@ function stepShip(world: WorldState, entity: Entity, input: InputState | undefin
   }
 
   // Check if flagship attractor is active — disables thrust, fire, and tracking
-  const attractorOn = flagshipAttractorActive.get(entity.ownerId) ?? false;
+  const attractorOn = world.cooldowns.attractorActive;
 
   const rotDir = (effectiveInput.left ? -1 : 0) + (effectiveInput.right ? 1 : 0);
   applyRotation(entity, rotDir as -1 | 0 | 1);
@@ -336,23 +366,16 @@ function stepShip(world: WorldState, entity: Entity, input: InputState | undefin
   }
 }
 
-// Per-player special state
-const specialCooldowns = new Map<string, number>(); // ticks until can use special
-const hunterCharges = new Map<string, number>(); // Hunter missile charges (max 3)
-const hunterRegenTick = new Map<string, number>(); // tick when next charge regenerates
-const flagshipAttractorActive = new Map<string, boolean>();
-
 function tryUseSpecial(world: WorldState, ship: Entity): void {
   const stats = ship.shipStats!;
-  const cd = specialCooldowns.get(ship.ownerId) ?? 0;
-  if (cd > 0) return;
+  if (world.cooldowns.specialCooldown > 0) return;
 
   switch (stats.specialType) {
     case SpecialType.TurtleCannon: {
       // Destroy all visible enemies; 75% chance costs 20 HP
       if (!ship.health || ship.health.current <= 20) break;
       if (Math.random() < 0.75) ship.health.current -= 20;
-      specialCooldowns.set(ship.ownerId, 10); // 10-cycle cooldown (matches original)
+      world.cooldowns.specialCooldown = 10; // 10-cycle cooldown (matches original)
 
       for (const e of world.entities.values()) {
         if (e.dead) continue;
@@ -370,7 +393,7 @@ function tryUseSpecial(world: WorldState, ship: Entity): void {
 
     case SpecialType.Shapeshifter: {
       // Toggle between Squid and Tank forms
-      specialCooldowns.set(ship.ownerId, 4); // 4-cycle cooldown (matches original)
+      world.cooldowns.specialCooldown = 4; // 4-cycle cooldown (matches original)
       const currentType = stats.shipType;
       const newType = currentType === ShipType.Squid ? ShipType.Tank : ShipType.Squid;
       const newDef = SHIP_DEFINITIONS[newType];
@@ -386,14 +409,13 @@ function tryUseSpecial(world: WorldState, ship: Entity): void {
 
     case SpecialType.HeatSeekerLauncher: {
       // Fire 17 homing Piranha missiles, 3 charges max, regen 1 every 20s
-      const charges = hunterCharges.get(ship.ownerId) ?? 3;
-      if (charges <= 0) break;
-      hunterCharges.set(ship.ownerId, charges - 1);
-      specialCooldowns.set(ship.ownerId, 4); // 4-cycle cooldown (matches original)
+      if (world.cooldowns.hunterCharges <= 0) break;
+      world.cooldowns.hunterCharges--;
+      world.cooldowns.specialCooldown = 4; // 4-cycle cooldown (matches original)
 
       // Schedule next charge regen
-      if (!hunterRegenTick.has(ship.ownerId)) {
-        hunterRegenTick.set(ship.ownerId, world.tick + 400); // 20s at 20Hz
+      if (world.cooldowns.hunterRegenTick === 0) {
+        world.cooldowns.hunterRegenTick = world.tick + 400; // 20s at 20Hz
       }
 
       // Fire 17 missiles in a spread toward a point 200px ahead
@@ -420,10 +442,9 @@ function tryUseSpecial(world: WorldState, ship: Entity): void {
 
     case SpecialType.PowerupAttractor: {
       // Toggle attractor/repulser field
-      const active = flagshipAttractorActive.get(ship.ownerId) ?? false;
-      flagshipAttractorActive.set(ship.ownerId, !active);
-      ship.attractorActive = !active;
-      specialCooldowns.set(ship.ownerId, 4); // 4-cycle cooldown (matches original)
+      world.cooldowns.attractorActive = !world.cooldowns.attractorActive;
+      ship.attractorActive = world.cooldowns.attractorActive;
+      world.cooldowns.specialCooldown = 4; // 4-cycle cooldown (matches original)
       break;
     }
   }
@@ -501,12 +522,10 @@ function stepTrackingCannons(world: WorldState, ship: Entity): void {
 function tryFireBullets(world: WorldState, ship: Entity): void {
   const stats = ship.shipStats!;
   const gunLevel = GUN_LEVELS[Math.min(stats.gunLevel, GUN_LEVELS.length - 1)];
-  const cooldown = playerFireCooldowns.get(ship.ownerId) ?? 0;
-  if (cooldown > 0) return;
-  const activeBullets = playerBulletCounts.get(ship.ownerId) ?? 0;
-  if (activeBullets >= gunLevel.maxBullets) return;
+  if (world.cooldowns.fireCooldown > 0) return;
+  if (world.cooldowns.bulletCount >= gunLevel.maxBullets) return;
 
-  playerFireCooldowns.set(ship.ownerId, gunLevel.fireDelay);
+  world.cooldowns.fireCooldown = gunLevel.fireDelay;
 
   const rad = degToRad(ship.rotation.angle);
   const cosA = Math.cos(rad);
@@ -518,13 +537,13 @@ function tryFireBullets(world: WorldState, ship: Entity): void {
 
   if (gunLevel.numShots === 1) {
     createBulletEntity(world, ship.ownerId, spawnX, spawnY, bvx, bvy, gunLevel.damage, gunLevel.size);
-    playerBulletCounts.set(ship.ownerId, activeBullets + 1);
+    world.cooldowns.bulletCount++;
   } else {
     const perpX = -sinA * 4;
     const perpY = cosA * 4;
     createBulletEntity(world, ship.ownerId, spawnX + perpX, spawnY + perpY, bvx, bvy, gunLevel.damage, gunLevel.size);
     createBulletEntity(world, ship.ownerId, spawnX - perpX, spawnY - perpY, bvx, bvy, gunLevel.damage, gunLevel.size);
-    playerBulletCounts.set(ship.ownerId, activeBullets + 2);
+    world.cooldowns.bulletCount += 2;
   }
 }
 
@@ -533,9 +552,8 @@ function tryFirePowerup(world: WorldState, ship: Entity): void {
   if (inv.items.length === 0) return;
 
   // Cooldown check (reuse fire cooldown)
-  const cooldown = playerFireCooldowns.get(ship.ownerId) ?? 0;
-  if (cooldown > 0) return;
-  playerFireCooldowns.set(ship.ownerId, 10); // cooldown between powerup shots
+  if (world.cooldowns.fireCooldown > 0) return;
+  world.cooldowns.fireCooldown = 10; // cooldown between powerup shots
 
   // Pop first powerup from inventory
   const pType = inv.items.shift()!;
@@ -615,15 +633,6 @@ function stepPortal(world: WorldState, entity: Entity): void {
   entity.position.x = centerX + Math.cos(rad) * DEFAULT_ORBIT_DISTANCE;
   entity.position.y = centerY + Math.sin(rad) * DEFAULT_ORBIT_DISTANCE;
 
-  // Process spawn queue (enemies spawn after 30-tick delay)
-  const queue = entity.portal.spawnQueue;
-  for (let i = queue.length - 1; i >= 0; i--) {
-    if (world.tick >= queue[i].spawnAtTick) {
-      const entry = queue.splice(i, 1)[0];
-      spawnEnemiesFromPortal(world, entity, entry.powerupType, entry.senderOwnerId);
-    }
-  }
-
   // Random enemy spawning after 40s (Inflater 40%, UFO 40%, Gunship 20%)
   if (world.tick > SPAWN_START_TICK) {
     const rate = world.tick > SPAWN_RATE_FAST_TICK ? SPAWN_RATE_FAST : SPAWN_RATE_INITIAL;
@@ -632,8 +641,7 @@ function stepPortal(world: WorldState, entity: Entity): void {
       const enemyType = roll < 0.4 ? EntityType.Inflater
         : roll < 0.8 ? EntityType.UFO
         : EntityType.Gunship;
-      const portalOwnerId = entity.portal.playerId;
-      createEnemyEntity(world, enemyType, '', portalOwnerId,
+      createEnemyEntity(world, enemyType, '', world.ownerId,
         entity.position.x, entity.position.y, Math.random() * 360);
     }
   }
@@ -775,15 +783,13 @@ function createEnemyEntity(
 
 const PORTAL_SPAWN_DELAY = 30; // 30 ticks (~1.5s) delay before enemies spawn
 
-/** Queue enemies to spawn from a portal after a delay */
+/** Queue enemies to spawn in this world after a delay */
 function queueEnemiesFromPortal(
   world: WorldState,
-  portal: Entity,
   powerupType: PowerupType,
   senderOwnerId: string,
 ): void {
-  if (!portal.portal) return;
-  portal.portal.spawnQueue.push({
+  world.pendingSpawns.push({
     powerupType,
     spawnAtTick: world.tick + PORTAL_SPAWN_DELAY,
     senderOwnerId,
@@ -818,9 +824,6 @@ function spawnEnemiesFromPortal(
   }
 }
 
-// Per-enemy fire cooldowns
-const enemyFireCooldowns = new Map<number, number>();
-
 /** Step an enemy entity each tick */
 function stepEnemy(world: WorldState, entity: Entity): void {
   // Lifespan
@@ -837,8 +840,7 @@ function stepEnemy(world: WorldState, entity: Entity): void {
   }
 
   // Decrement fire cooldown
-  const fcd = enemyFireCooldowns.get(entity.id) ?? 0;
-  if (fcd > 0) enemyFireCooldowns.set(entity.id, fcd - 1);
+  if ((entity.fireCooldown ?? 0) > 0) entity.fireCooldown = (entity.fireCooldown ?? 0) - 1;
 
   // Type-specific behaviors
   switch (entity.type) {
@@ -954,8 +956,7 @@ function stepEnemy(world: WorldState, entity: Entity): void {
 
 /** Enemy fires a bullet at its target player */
 function enemyFireAtTarget(world: WorldState, entity: Entity, fireRate: number, bulletSpeed: number): void {
-  const cd = enemyFireCooldowns.get(entity.id) ?? 0;
-  if (cd > 0) return;
+  if ((entity.fireCooldown ?? 0) > 0) return;
 
   // Find target ship
   let targetShip: Entity | undefined;
@@ -979,7 +980,7 @@ function enemyFireAtTarget(world: WorldState, entity: Entity, fireRate: number, 
   const damage = ENEMY_DEFS[entity.type]?.damage ?? 8;
   const bullet = createBulletEntity(world, entity.ownerId, entity.position.x, entity.position.y, bvx, bvy, Math.max(damage / 2, 4), 3);
   bullet.lifespan = { remaining: 60 }; // shorter lifespan for enemy bullets
-  enemyFireCooldowns.set(entity.id, fireRate);
+  entity.fireCooldown = fireRate;
 }
 
 /** Nuke: massive AOE explosion */
@@ -1119,7 +1120,7 @@ function stepScarab(world: WorldState, entity: Entity): void {
 
       // If close enough to portal, deliver the powerup
       if (dist < 30) {
-        queueEnemiesFromPortal(world, targetPortal, entity.scarabCarrying, entity.ownerId);
+        queueEnemiesFromPortal(world, entity.scarabCarrying, entity.ownerId);
         entity.scarabCarrying = undefined;
       }
     } else {
@@ -1285,8 +1286,13 @@ function resolveCollisions(world: WorldState): void {
       const dy = bullet.position.y - portal.position.y;
       if (dx * dx + dy * dy < 30 * 30) {
         if (bullet.powerupType !== undefined) {
-          // Powerup bullet: queue enemies to spawn from portal after delay
-          queueEnemiesFromPortal(world, portal, bullet.powerupType!, bullet.ownerId);
+          // Powerup bullet: emit cross-world event to spawn enemies in target's world
+          world.crossWorldEvents.push({
+            type: 'spawnEnemies',
+            targetPlayerId: portal.portal!.playerId,
+            senderPlayerId: bullet.ownerId,
+            powerupType: bullet.powerupType!,
+          });
         } else {
           // Regular bullet: accumulate damage on portal
           if (portal.portal) {
@@ -1409,7 +1415,7 @@ function collectPowerup(world: WorldState, ship: Entity, pType: PowerupType): vo
   } else {
     // Hunter: picking up HeatSeeker powerup refills missile charges to 3
     if (pType === PowerupType.HeatSeeker && ship.shipStats?.specialType === SpecialType.HeatSeekerLauncher) {
-      hunterCharges.set(ship.ownerId, 3);
+      world.cooldowns.hunterCharges = 3;
       return; // consumed, not added to inventory
     }
 

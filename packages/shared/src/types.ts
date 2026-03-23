@@ -74,8 +74,6 @@ export interface Portal {
   orbitDegrees: number;
   playerId: string;
   damageAccumulated: number;
-  /** Queue of pending enemy spawns: [powerupType, spawnAtTick, senderOwnerId][] */
-  spawnQueue: Array<{ powerupType: PowerupType; spawnAtTick: number; senderOwnerId: string }>;
 }
 
 export interface Tracking {
@@ -114,6 +112,8 @@ export interface Entity {
   scarabCarrying?: PowerupType;
   /** Flagship attractor active state (stored on entity for snapshot) */
   attractorActive?: boolean;
+  /** Enemy fire cooldown (per-entity, replaces module-level Map) */
+  fireCooldown?: number;
   dead?: boolean;
 }
 
