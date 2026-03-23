@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { Application, Graphics } from 'pixi.js';
+import * as Audio from './AudioManager.js';
 import {
   DEFAULT_PORT,
   ARENA_WIDTH,
@@ -60,6 +61,12 @@ export function App() {
   const [currentTableId, setCurrentTableId] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const playerIdRef = useRef<string | null>(null);
+  const [audioOn, setAudioOn] = useState(false);
+
+  const handleToggleAudio = useCallback(() => {
+    const nowOn = Audio.toggleAudio();
+    setAudioOn(nowOn);
+  }, []);
 
   const wsSend = (msg: ClientMessage) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify(msg));
@@ -112,7 +119,7 @@ export function App() {
   };
 
   // ---- Game canvas (only when in game) ----
-  const gameKey = currentTableId; // remount canvas when table changes
+  const gameKey = currentTableId ?? '';
   useEffect(() => {
     if (screen !== 'game') return;
     const container = containerRef.current;
@@ -154,6 +161,8 @@ export function App() {
       let playerSlotMap = new Map<string, number>();
       let gameEvents: Array<{ text: string; tick: number }> = [];
       let roomState: RoomState = RoomState.Idle;
+      let prevEntityIds = new Set<number>();
+      let prevLocalInv = 0;
 
       // Game-specific message handler
       const gameHandler = (event: MessageEvent) => {
@@ -180,6 +189,24 @@ export function App() {
                 setInventory([]);
               }
             }
+
+            // ---- Audio triggers ----
+            const currentIds = new Set<number>();
+            for (const e of msg.entities) {
+              currentIds.add(e.id);
+              if (!prevEntityIds.has(e.id)) {
+                // New entity appeared
+                if (e.type === EntityType.Explosion) Audio.playExplosion();
+              }
+            }
+            // Detect local inventory change (powerup collected)
+            if (playerId) {
+              const localShip = msg.entities.find((e) => e.type === EntityType.Ship && e.ownerId === playerId);
+              const invLen = localShip?.powerups?.length ?? 0;
+              if (invLen > prevLocalInv) Audio.playCollect();
+              prevLocalInv = invLen;
+            }
+            prevEntityIds = currentIds;
           }
           if (msg.type === 'roomStateChanged') {
             roomState = msg.state;
@@ -208,6 +235,10 @@ export function App() {
       const onDown = (e: KeyboardEvent) => {
         if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
         keys.add(e.key);
+        // M key toggles audio
+        if (e.key === 'm' || e.key === 'M') {
+          handleToggleAudio();
+        }
         const num = parseInt(e.key);
         if (num >= 1 && num <= SHIP_TYPE_COUNT) {
           const newType = (num - 1) as ShipType;
@@ -223,15 +254,26 @@ export function App() {
       window.addEventListener('keyup', onUp);
 
       let seq = 0;
+      let wasFiring = false;
       const inputInterval = setInterval(() => {
         seq++;
+        const isThrusting = keys.has('ArrowUp') || keys.has('w');
+        const isFiring = keys.has(' ');
+
+        // Audio: thrust loop
+        if (isThrusting) { Audio.startThrust(); } else { Audio.stopThrust(); }
+        // Audio: fire (on press, not hold — throttle to every 4th tick)
+        if (isFiring && !wasFiring) Audio.playFire();
+        if (isFiring && seq % 4 === 0) Audio.playFire();
+        wasFiring = isFiring;
+
         wsSend({
           type: 'input', seq,
           input: {
             left: keys.has('ArrowLeft') || keys.has('a'),
             right: keys.has('ArrowRight') || keys.has('d'),
-            thrust: keys.has('ArrowUp') || keys.has('w'),
-            fire: keys.has(' '),
+            thrust: isThrusting,
+            fire: isFiring,
             secondaryFire: keys.has('Shift'),
             special: keys.has('e'),
           },
@@ -533,6 +575,7 @@ export function App() {
         window.removeEventListener('keydown', onDown);
         window.removeEventListener('keyup', onUp);
         ws!.removeEventListener('message', gameHandler);
+        Audio.stopThrust();
         app.destroy(true);
       };
     }
@@ -746,6 +789,17 @@ export function App() {
           >
             LEAVE
           </button>
+          <button
+            onClick={handleToggleAudio}
+            style={{
+              background: 'transparent', border: `1px solid ${audioOn ? '#00ffaa' : '#555'}`,
+              color: audioOn ? '#00ffaa' : '#555',
+              padding: '2px 8px', fontSize: '9px', fontFamily: 'inherit',
+              cursor: 'pointer', pointerEvents: 'auto',
+            }}
+          >
+            {audioOn ? 'SFX ON' : 'SFX OFF'}
+          </button>
         </div>
 
         {/* Ship + Health */}
@@ -912,6 +966,7 @@ export function App() {
         <span>Shift: powerup</span>
         <span>E: special</span>
         <span>1-8: ship</span>
+        <span>M: sound</span>
       </div>
     </div>
   );
